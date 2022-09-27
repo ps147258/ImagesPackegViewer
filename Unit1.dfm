@@ -89,7 +89,7 @@ object Form1: TForm1
     Font.Height = -16
     Font.Name = 'Consolas'
     Font.Style = []
-    FlatScrollBars = True
+    HideSelection = False
     LargeImages = ImageList1
     ReadOnly = True
     RowSelect = True
@@ -122,7 +122,7 @@ object Form1: TForm1
   object JvThread1: TJvThread
     Exclusive = True
     MaxCount = 0
-    RunOnCreate = True
+    RunOnCreate = False
     FreeOnTerminate = True
     OnBegin = JvThread1Begin
     OnExecute = JvThread1Execute
@@ -134,17 +134,17 @@ object Form1: TForm1
     Enabled = False
     Interval = 100
     OnTimer = Timer1Timer
-    Left = 72
-    Top = 8
+    Left = 16
+    Top = 56
   end
   object Timer2: TTimer
     OnTimer = Timer2Timer
-    Left = 112
-    Top = 8
+    Left = 56
+    Top = 56
   end
   object PopupMenu1: TPopupMenu
-    Left = 168
-    Top = 8
+    Left = 112
+    Top = 56
     object N1: TMenuItem
       Caption = #20999#25563' '#21407#22987'/'#26368#20339' '#22823#23567' ('#28369#40736#40670#20841#19979')'
       OnClick = N1Click
@@ -159,7 +159,16 @@ object Form1: TForm1
     BkColor = clWhite
     Height = 80
     Width = 80
-    Left = 16
-    Top = 56
+    Left = 144
+    Top = 8
+  end
+  object JvThread2: TJvThread
+    Exclusive = False
+    MaxCount = 0
+    RunOnCreate = True
+    FreeOnTerminate = True
+    OnExecute = JvThread2Execute
+    Left = 80
+    Top = 8
   end
 end
