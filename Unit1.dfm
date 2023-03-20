@@ -18,7 +18,6 @@ object Form1: TForm1
   OnDestroy = FormDestroy
   OnKeyDown = FormKeyDown
   OnShow = FormShow
-  PixelsPerInch = 96
   DesignSize = (
     498
     480)
@@ -48,6 +47,8 @@ object Form1: TForm1
     TabOrder = 0
     OnDblClick = ScrollBox1DblClick
     OnResize = ScrollBox1Resize
+    ExplicitWidth = 338
+    ExplicitHeight = 479
     object Image1: TImage
       Left = 0
       Top = 0
@@ -70,6 +71,16 @@ object Form1: TForm1
       TabOrder = 0
       Visible = False
       OnClick = Button1Click
+    end
+    object Button2: TButton
+      Left = 223
+      Top = 34
+      Width = 108
+      Height = 25
+      Caption = 'NextImageTest'
+      TabOrder = 1
+      Visible = False
+      OnClick = Button2Click
     end
   end
   object ListView1: TListView
@@ -101,6 +112,8 @@ object Form1: TForm1
     ViewStyle = vsSmallIcon
     OnCompare = ListView1Compare
     OnSelectItem = ListView1SelectItem
+    ExplicitLeft = 341
+    ExplicitHeight = 479
   end
   object StaticText1: TStaticText
     Left = 416
@@ -118,6 +131,8 @@ object Form1: TForm1
     ParentFont = False
     TabOrder = 1
     Visible = False
+    ExplicitLeft = 412
+    ExplicitTop = 456
   end
   object JvThread1: TJvThread
     Exclusive = True
@@ -170,5 +185,12 @@ object Form1: TForm1
     OnExecute = JvThread2Execute
     Left = 80
     Top = 8
+  end
+  object Timer3: TTimer
+    Enabled = False
+    Interval = 100
+    OnTimer = Timer3Timer
+    Left = 16
+    Top = 112
   end
 end
