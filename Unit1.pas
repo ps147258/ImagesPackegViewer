@@ -3,36 +3,53 @@
 interface
 
 uses
-  Winapi.Windows, Winapi.Messages, Winapi.ActiveX, Winapi.MMSystem, Winapi.CommCtrl,
+  Winapi.Windows, Winapi.Messages, Winapi.ActiveX, Winapi.MMSystem, Winapi.CommCtrl, Winapi.ShellAPI,
   System.SysUtils, System.Variants, System.Classes, System.Types, System.IOUtils,
   System.Generics.Defaults, System.Generics.Collections, System.Zip, System.ImageList,
-  System.IniFiles,
-  Vcl.Graphics, Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls,
+  System.IniFiles, System.WideStrUtils,
+  Vcl.Graphics, Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Clipbrd,
   Vcl.StdCtrls, Vcl.Menus, Vcl.ComCtrls, Vcl.ImgList, Vcl.Imaging.GIFImg,
   Vcl.ImageCollection,
+  JvComponentBase, JvThread, JvBalloonHint,
+
   Vcl.Graphics.MultipleWICImage,
 //  Vcl.Imaging.GIFImg.GifExtend,
-  JvComponentBase, JvThread,
-  Vcl.DragFiles; //, Vcl.PositionControl;
+  Vcl.Clipboard.Files,
+//  Vcl.DragFiles, // 以 Sven Harazim 的 DragAndDrop 元件取代，支援檔案拖入拖出
+//  Vcl.PositionControl,
+
+  // DragAndDrop component suite.
+  // © 1997-2010 Anders Melander
+  // © 2011-2023 Sven Harazim
+  // https://github.com/landrix/The-Drag-and-Drop-Component-Suite-for-Delphi
+  DragDrop, DropSource, DropTarget, DragDropFile;
 
 type
   TForm1 = class(TForm)
+    ImageList1: TImageList;
     JvThread1: TJvThread;
+    JvThread2: TJvThread;
     Timer1: TTimer; // 延遲載入
     Timer2: TTimer; // 訊息
-    Timer3: TTimer; // 多圖顯示更新
-    ScrollBox1: TScrollBox;
-    Image1: TImage;
-    StaticText1: TStaticText;
+    Timer3: TTimer; // 多圖動態顯示
+    DropFileTarget1: TDropFileTarget;
+    DropFileSource1: TDropFileSource;
     PopupMenu1: TPopupMenu;
-    N1: TMenuItem;
-    N2: TMenuItem;
+      N1: TMenuItem;
+      N2: TMenuItem;
+      N3: TMenuItem;
+      N4: TMenuItem;
+      N5: TMenuItem;
+      N6: TMenuItem;
+      N7: TMenuItem;
+    ScrollBox1: TScrollBox;
+      Image1: TImage;
+    StaticText1: TStaticText;
     Splitter1: TSplitter;
-    ImageList1: TImageList;
     ListView1: TListView;
     Button1: TButton;
-    JvThread2: TJvThread;
     Button2: TButton;
+    JvBalloonHint1: TJvBalloonHint;
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure FormShow(Sender: TObject);
@@ -51,13 +68,22 @@ type
     procedure ScrollBox1Resize(Sender: TObject);
     procedure ScrollBox1DblClick(Sender: TObject);
     procedure ListView1Compare(Sender: TObject; Item1, Item2: TListItem; Data: Integer; var Compare: Integer);
+    procedure ListView1InfoTip(Sender: TObject; Item: TListItem; var InfoTip: string);
     procedure ListView1SelectItem(Sender: TObject; Item: TListItem; Selected: Boolean);
     procedure Image1DblClick(Sender: TObject);
     procedure Image1MouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
     procedure Image1MouseUp(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
     procedure Image1MouseMove(Sender: TObject; Shift: TShiftState; X, Y: Integer);
+    procedure DropFileTarget1Drop(Sender: TObject; ShiftState: TShiftState; APoint: TPoint; var Effect: Integer);
+    procedure DropFileTarget1DragOver(Sender: TObject; ShiftState: TShiftState; APoint: TPoint; var Effect: Integer);
+    procedure DropFileSource1GetDragImage(Sender: TObject; const DragSourceHelper: IDragSourceHelper; var Handled: Boolean);
+    procedure DropFileSource1AfterDrop(Sender: TObject; DragResult: TDragResult; Optimized: Boolean);
+    procedure PopupMenu1Popup(Sender: TObject);
     procedure N1Click(Sender: TObject);
     procedure N2Click(Sender: TObject);
+    procedure N4Click(Sender: TObject);
+    procedure N6Click(Sender: TObject);
+    procedure N7Click(Sender: TObject);
     procedure Button1Click(Sender: TObject);
     procedure Button2Click(Sender: TObject);
   private type
@@ -67,6 +93,8 @@ type
     TTurnPage = (_TP_First, _TP_Last, _TP_Prev, _TP_Next);
     TImageType = (_PIT_OBJ, _PIT_WIC, _PIT_GIF, _PIT_MultiWIC);
     TImageObj = record
+      function GetSize(out ASize: TSize): Boolean; overload; inline;
+      function GetSize: TSize; overload; inline;
       case TImageType of
         _PIT_OBJ:(Obj: TObject;);
         _PIT_WIC:(WIC: TWICImage;);
@@ -130,32 +158,32 @@ type
     end;
     PGifFrameBuffer = ^TGifFrameBuffer;
   private
-    Processors: DWORD;
-    SettingChanged: Boolean;
+    Processors: DWORD;       // 處理器數量
+    SettingChanged: Boolean; // 用於表示設定是否有變動
     SplitterMin: Integer;
     SplitterMax: Integer;
-    Closeing: Boolean;
+    Closeing: Boolean;       // 程式是否處於關閉程序中
     ViewState: TViewState;
-    CursorTracking: Boolean;
-    IsLoading: Boolean;
-    LastCursor: TPoint;
-    Loading: string;
-    ThumbSize: TSize;
-    DropFiles: TDropFiles;
+    CursorTracking: Boolean; // 是否開始處理游標追蹤
+    IsLoading: Boolean;      // 是否正在處理清單檔案的載入
+    LastCursor: TPoint;      // 游標位置暫存
+    Loading: string;         // 同步載入處理的提示訊息
+    ThumbSize: TSize;        // 縮圖大小，在此介面建立時以 ImageList1 的圖形大小作為設定。
+//    DropFiles: TDropFiles;
     DirPath: string;
     Title: string;
-    OpenType: TOpenType;
-    ZipCS: TRTLCriticalSection;
+    OpenType: TOpenType;     // 檔案的開啟模式
+    ZipCS: TRTLCriticalSection; // 防止 Zip 被同時存取，若 Class 沒有表明可同時多執行續，處理時都應預設為單一處理。
     Zip: TZipFile;
-    MemBuf: TMemoryStream;
+    MemBuf: TMemoryStream;   // 緩衝區，用來減少記憶體碎片產生的可能，雖機率應不大。
 //    BmpBuf: TBitmap;
-    Pictures: TPictureList;
-    iPicture: Integer;
-    iPictureOld: Integer;
-    Limit: TSize;
-    ImageView: TImageItem;
-    DisplayMode: TDisplayMode;
-    BaseThread: TJvBaseThread;
+    Pictures: TPictureList;  // 來源影像資訊的清單
+    iPicture: Integer;       // 主影像索引
+    iPictureOld: Integer;    // 主影像索引變更前的索引
+    Limit: TSize;            // 影像在介面中可顯示全圖的最大大小
+    ImageView: TImageItem;   // 目前已最佳化的影像
+    DisplayMode: TDisplayMode; // 顯示影像大小的方式
+    BaseThread: TJvBaseThread; // 處理影像載入的執行續
     OldAppMessage: TMessageEvent;
     procedure OnAppMessage(var Msg: TMsg; var Handled: Boolean);
     procedure SettingChange; inline;
@@ -163,7 +191,8 @@ type
     function GetSplitterCurr: Integer;
     procedure SplitterTo(X, Y: Integer); overload;
     procedure SplitterTo(Value: Integer); overload;
-    procedure ViewTipAdjust;
+    procedure ViewTipMode(bBlatant: Boolean);
+    procedure ViewTipAdjust(bCentral: Boolean = False);
     procedure ViewSizeTip;
     procedure FocusWindows;
     procedure SetLayoutSize(Width, Height: Integer);
@@ -172,14 +201,17 @@ type
     procedure OpenImagesFormFiles(const Directory: string);
     procedure OpenImagesFormZip(const Path: string);
     function IndexOfFileName(const FileName: string): Integer;
-    procedure OnDropFiles(Sender: TObject; WinControl: TWinControl);
-    procedure ShowPageInfo;
-    function LoadOriginal(const FileItem: TPictureItem; var ImageItem: TImageItem; FrameIndex: Integer = 0; Buffer: TMemoryStream = nil): Boolean;
+//    procedure OnDropFiles(Sender: TObject; WinControl: TWinControl);
+    procedure DoCopyFileToClipboard(bMove: Boolean);
+    procedure ShowTip(const Text: string; Seconds: Byte = 1; Color: TColor = clWindowText);
+    procedure ShowLoadingInfo;
+    function SaveFileToTempPath(const PictureItem: TPictureItem): string;
+    function LoadOriginal(const FileItem: TPictureItem; var ImageItem: TImageItem; FrameIndex: Integer = 0; Buffer: TStream = nil): Boolean;
     function LoadPicture(Index: Integer): Boolean;
     procedure SetTimerImageWating;
-    procedure ShowImage(Index: Integer; Mode: TDisplayMode = _DM_Suitable); overload;
-    procedure ShowImage(Mode: TDisplayMode); overload; inline;
-    procedure ShowImage; overload; inline;
+    function ShowImage(Index: Integer; Mode: TDisplayMode = _DM_Suitable): Boolean; overload;
+    function ShowImage(Mode: TDisplayMode): Boolean; overload; inline;
+    function ShowImage: Boolean; overload; inline;
     procedure ViewOriginal(const Point: TPoint); overload;
     procedure ViewOriginal; overload;
     procedure NextWICImage;
@@ -222,6 +254,187 @@ const
 
 {$R *.dfm}
 
+var
+  gExplorerPath: string = '';
+  gTempDir: string = '';
+
+function GetExplorerPath: string;
+const
+  ExplorerFileName = 'explorer.exe';
+var
+  I, J: Integer;
+begin
+  if gExplorerPath <> '' then Exit(gExplorerPath);
+
+  SetLength(Result, MAX_PATH);
+  I := GetWindowsDirectory(PChar(Result), MAX_PATH);
+
+  if (I > 0) and (Result[I] <> PathDelim) then
+  begin
+    Inc(I);
+    Result[I] := PathDelim;
+  end;
+
+  Inc(I);
+  J := ExplorerFileName.Length;
+  Move(ExplorerFileName, Result[I], (J + 1) * SizeOf(Char));
+  Inc(I, J);
+//  Result[I] := #0;
+  SetLength(Result, I);
+end;
+
+function GetAppTempDir: string;
+begin
+  if gTempDir <> '' then Exit(gTempDir);
+
+  gTempDir := IncludeTrailingPathDelimiter(TPath.GetTempPath) +
+              ChangeFileExt(ExtractFileName(Application.ExeName), '') + PathDelim;
+  Result := gTempDir
+end;
+
+function GetNearestDir(const Directory: string): string;
+var
+  I: Integer;
+begin
+  Result := Directory;
+  if Result[Result.Length] = PathDelim then
+    SetLength(Result, Result.Length - 1);
+  while not DirectoryExists(Result, False) do
+  begin
+    I := Result.LastIndexOf(PathDelim);
+    if I < 0 then Exit('');
+    SetLength(Result, I - 1);
+  end;
+end;
+
+type
+  TExplorerOpenMode = (_FEO_All, _FEO_Dir, _FEO_Nearest);
+
+function GetShellExecuteMessage(Code: HINST): string;
+begin
+//  case Code of
+//    SE_ERR_FNF:             Result := 'File not found.';
+//    SE_ERR_PNF:             Result := 'Path not found.';
+//    SE_ERR_ACCESSDENIED:    Result := 'Access denied.';
+//    SE_ERR_OOM:             Result := 'Out of memory.';
+//    SE_ERR_DLLNOTFOUND:     Result := 'Dynamic-link library not found.';
+//    SE_ERR_SHARE:           Result := 'Cannot share an open file.';
+//    SE_ERR_ASSOCINCOMPLETE: Result := 'File association information not complete.';
+//    SE_ERR_DDETIMEOUT:      Result := 'DDE operation timeout.';
+//    SE_ERR_DDEFAIL:         Result := 'DDE operation fail.';
+//    SE_ERR_DDEBUSY:         Result := 'DDE operation is busy.';
+//    SE_ERR_NOASSOC:         Result := 'File association not available.';
+//  else if Code <= 32 then Result := Format('Error(%d).', [Code]) else Result := '';
+//  end;
+  case Code of
+    SE_ERR_FNF:             Result := '檔案不存在。';
+    SE_ERR_PNF:             Result := '路徑不存在。';
+    SE_ERR_ACCESSDENIED:    Result := '無法存取。';
+    SE_ERR_OOM:             Result := '記憶體不足。';
+    SE_ERR_DLLNOTFOUND:     Result := '找不到動態連接庫(DLL)。';
+    SE_ERR_SHARE:           Result := '無法共用開啟的檔案。';
+    SE_ERR_ASSOCINCOMPLETE: Result := '檔案關聯資訊不完整。';
+    SE_ERR_DDETIMEOUT:      Result := 'DDE 操作逾時。';
+    SE_ERR_DDEFAIL:         Result := 'DDE 操作失敗。';
+    SE_ERR_DDEBUSY:         Result := 'DDE 操作忙碌。';
+    SE_ERR_NOASSOC:         Result := '檔案關聯無法使用。';
+  else if Code <= 32 then Result := Format('Error(%d).', [Code]) else Result := '';
+  end;
+end;
+
+function ExplorerSucceed(Code: HINST): Boolean; inline;
+begin
+  Result := Code > 32;
+end;
+
+function OpenInExplorer(const Path: string; AsFolder: Boolean): HINST;
+var
+  s: string;
+begin
+// 使用 GetExplorerPath 以取得明確的 Exlporer 路徑，減少路徑搜索的步驟，
+// 這只是個人需求，因沒必要搜尋系統變數路徑而已。
+// 但不防止被 IFEO(Image File Execution Options) 變更實際執行映像位置。
+//
+// Image File Execution Options
+// https://learn.microsoft.com/en-us/previous-versions/windows/desktop/xperf/image-file-execution-options
+//
+// HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\taskmgr.exe
+//
+  if AsFolder then s := '/e,"'+Path+'"' else s := '/select,"'+Path+'"';
+    Result := ShellExecute(Application.Handle, 'open', PChar(GetExplorerPath), PChar(s), nil, SW_NORMAL)
+//
+// 或使用預設 explore 開啟方式
+//  Result := ShellExecute(Application.Handle, 'explore', PChar(Path), nil, nil, SW_NORMAL);
+end;
+
+function BrowseByExplorer(Directory: string; Filename: string = ''; Mode: TExplorerOpenMode = _FEO_All): Boolean;
+var
+  Path: string;
+  hInstApp: HINST;
+begin
+  if Filename.IsEmpty then
+  begin
+    if Directory.IsEmpty then Exit(True);
+  end
+  else
+  begin
+    if Directory.IsEmpty then
+      Directory := ExcludeTrailingPathDelimiter(GetCurrentDir);
+
+    Path := IncludeTrailingPathDelimiter(Directory) + Filename;
+    if FileExists(Path, False) then
+    begin
+      hInstApp := OpenInExplorer(Path, False);
+//      hInstApp := ShellExecute(Application.Handle, 'open', PChar(GetExplorerPath),
+//        PChar('/select,"'+Path+'"'), nil, SW_NORMAL);
+
+      if ExplorerSucceed(hInstApp) then Exit(True);
+    end
+    else
+      hInstApp := SE_ERR_FNF;
+    if Mode = _FEO_All then
+    begin
+      Application.MessageBox(PChar(Path + sLineBreak +
+        GetShellExecuteMessage(hInstApp)), '檔案 或 資料夾 不存在！', MB_OK or MB_ICONHAND);
+      Exit(False);
+    end;
+  end;
+
+  if DirectoryExists(Directory, False) then
+  begin
+    hInstApp := OpenInExplorer(Path, True);
+//    hInstApp := ShellExecute(Application.Handle, 'open', PChar(GetExplorerPath),
+//      PChar('/e,"'+Directory+'"'), nil, SW_NORMAL);
+
+    if ExplorerSucceed(hInstApp) then Exit(True);
+  end
+  else
+    hInstApp := SE_ERR_PNF;
+
+  case Mode of
+    _FEO_All, _FEO_Dir:
+    begin
+      Application.MessageBox(PChar(Path + sLineBreak +
+        GetShellExecuteMessage(hInstApp)), '資料夾不存在！', MB_OK or MB_ICONHAND);
+      Exit(False);
+    end;
+  end;
+
+  if Mode = _FEO_Nearest then
+  begin
+    Path := GetNearestDir(Directory);
+    hInstApp := OpenInExplorer(Path, True);
+//    hInstApp := ShellExecute(Application.Handle, 'open', PChar(GetExplorerPath),
+//      PChar('/e,"'+Path+'"'), nil, SW_NORMAL);
+    if ExplorerSucceed(hInstApp) then Exit(True);
+
+    Application.MessageBox(PChar(Directory + sLineBreak +
+      GetShellExecuteMessage(hInstApp)), '路徑不存在，也不存在上層路徑！', MB_OK or MB_ICONHAND);
+  end;
+
+  Result := False;
+end;
+
 function AppName: string; inline;
 begin
   Result := Application.ExeName;
@@ -260,8 +473,7 @@ var
   FileName: string;
 begin
   hFind := Winapi.Windows.FindFirstFile(PChar(Path + '*'), FindData);
-  if hFind = INVALID_HANDLE_VALUE then
-    Exit;
+  if hFind = INVALID_HANDLE_VALUE then Exit;
   try
     repeat
       if FindData.dwFileAttributes and FILE_ATTRIBUTE_DIRECTORY = 0 then
@@ -283,15 +495,9 @@ begin
   sR := ChangeFileExt(Right, '');
   sL := ChangeFileExt(Left, '');
   if TryStrToInt(sR, iB) then
-    if TryStrToInt(sL, iA) then
-      Result := iA - iB
-    else
-      Result := 1
+    if TryStrToInt(sL, iA) then Result := iA - iB else Result := 1
   else
-    if TryStrToInt(sL, iA) then
-      Result := -1
-    else
-      Result := CompareStr(sL, sR);
+    if TryStrToInt(sL, iA) then Result := -1 else Result := CompareStr(sL, sR);
 end;
 
 //
@@ -330,8 +536,7 @@ begin
 
   si.cbSize := SizeOf(si);
   si.fMask := SIF_ALL;
-  if not GetScrollInfo(ListView.Handle, SB_VERT, si) then
-    Exit;
+  if not GetScrollInfo(ListView.Handle, SB_VERT, si) then Exit;
 
   GetItemRect(ListView, si.nPos, TopR);
   GetItemRect(ListView, Index, ItemR);
@@ -365,16 +570,15 @@ begin
   FillChar(SI, SizeOf(SI), 0);
   GetNativeSystemInfo(SI);
   Processors := SI.dwNumberOfProcessors;
-  if Processors <= 0 then
-    Processors := 8;
+  if Processors <= 0 then Processors := 8;
 
-  Limit.Width := 0;
+  Limit.Width  := 0;
   Limit.Height := 0;
   for I := 0 to Screen.MonitorCount - 1 do
   begin
     M := Screen.Monitors[I];
     N := M.Width;
-    if N > Limit.Width then Limit.Width := N;
+    if N > Limit.Width  then Limit.Width  := N;
     N := M.Height;
     if N > Limit.Height then Limit.Height := N;
   end;
@@ -384,7 +588,7 @@ begin
   MemBuf := nil;
   Pictures := TPictureList.Create(TComparer<TPictureItem>.Construct(ComparePictureItem));
 
-  DropFiles := TDropFiles.Create(Self, OnDropFiles);
+//  DropFiles := TDropFiles.Create(Self, OnDropFiles);
   ViewTipAdjust;
 
   ThumbSize := TSize.Create(ImageList1.Width, ImageList1.Height);
@@ -395,11 +599,8 @@ procedure TForm1.FormDestroy(Sender: TObject);
 begin
   JvThread1.TerminateWaitFor(False);
 
-  if Assigned(Pictures) then
-    Pictures.Free;
-
-  if Assigned(MemBuf) then
-    MemBuf.Free;
+  if Assigned(Pictures) then Pictures.Free;
+  if Assigned(MemBuf)   then MemBuf.Free;
 
   if Assigned(Zip) then
   begin
@@ -407,8 +608,7 @@ begin
     Zip.Free;
   end;
 
-  if ImageView.Assigned then
-    ImageView.Slot.Obj.Free;
+  if ImageView.Assigned then ImageView.Slot.Obj.Free;
 end;
 
 procedure TForm1.FormShow(Sender: TObject);
@@ -439,11 +639,8 @@ begin
     OldAppMessage(Msg, Handled);
 
 //  try
-    if Msg.message <> WM_MOUSEWHEEL then
-      Exit;
-
-    if ListView1.MouseInClient then
-      Exit;
+    if Msg.message <> WM_MOUSEWHEEL then Exit;
+    if ListView1.MouseInClient      then Exit;
 
     WheelDelta := PCMMouseWheel(@Msg.message).WheelDelta;
 
@@ -467,28 +664,37 @@ var
   W: TWICImage;
   P: TPictureItem;
 begin
-  case Key of
-    VK_ESCAPE: CloseImages;
-    VK_LEFT  : TurnPage(_TP_Prev);
-    VK_RIGHT : TurnPage(_TP_Next);
-    VK_F2    : N2.Click;
-    VK_F3:
-    begin
-      P := Pictures.Items[iPicture];
-      if P.Image.Mode <> _PIT_WIC then
-        Exit;
-      W := P.Image.Slot.WIC;
-      if not Assigned(W) then
-        Exit;
+  if Shift = [] then
+  begin
+    case Key of
+      VK_ESCAPE: CloseImages;
+      VK_LEFT  : TurnPage(_TP_Prev);
+      VK_RIGHT : TurnPage(_TP_Next);
+      VK_F2    : N2.Click;
+      VK_F3:
+      begin
+        P := Pictures.Items[iPicture];
+        if P.Image.Mode <> _PIT_WIC then Exit;
 
-      if W.FrameCount < 2 then
-        Exit;
+        W := P.Image.Slot.WIC;
+        if not Assigned(W)  then Exit;
+        if W.FrameCount < 2 then Exit;
 
-      if W.FrameIndex >= W.FrameCount -1 then
-        W.FrameIndex := 0
-      else
-        W.FrameIndex := W.FrameIndex + 1;
-      ShowImage(_DM_Original);
+        if W.FrameIndex >= W.FrameCount -1 then
+          W.FrameIndex := 0
+        else
+          W.FrameIndex := W.FrameIndex + 1;
+
+        ShowImage(_DM_Original);
+      end;
+    end;
+  end
+  else if [ssCtrl] = Shift then
+  begin
+    case Chr(Key) of
+      'E': N4.Click;
+      'C': N6.Click;
+      'X': N7.Click;
     end;
   end;
 end;
@@ -534,6 +740,13 @@ begin
   Compare := Integer(Item1.Data) - Integer(Item2.Data);
 end;
 
+procedure TForm1.ListView1InfoTip(Sender: TObject; Item: TListItem; var InfoTip: string);
+begin
+  if Item.SubItems.Count <= 0 then Exit;
+
+  InfoTip := Item.SubItems.Strings[0];
+end;
+
 procedure TForm1.ListView1SelectItem(Sender: TObject; Item: TListItem; Selected: Boolean);
 begin
   Include(ViewState, _VS_Selecting);
@@ -549,7 +762,48 @@ begin
 end;
 
 procedure TForm1.Image1MouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+label
+  NoDrag;
+var
+  s: string;
 begin
+  if not ((ssShift in Shift) xor (ssCtrl in Shift)) then
+    goto NoDrag;
+//
+//  // Check mouse button, if mouse left button only.
+//  if not (ssLeft in Shift) or (ssRight in Shift) or (ssMiddle in Shift) then
+//    goto NoDrag;
+
+  if iPicture < 0 then                     goto NoDrag;
+  if iPicture >= Pictures.Count then       goto NoDrag;
+  if DropFileSource1.DragInProgress then   goto NoDrag;
+  if DropFileSource1.Files.Count <> 0 then goto NoDrag;
+
+  LastCursor := Mouse.CursorPos;
+  if not DragDetectPlus(ScrollBox1.Handle, LastCursor) then goto NoDrag;
+
+  case OpenType of
+    _OT_Files:
+    begin
+      s := DirPath + Pictures.Items[iPicture].Name;
+      DropFileSource1.DragTypes := [dtCopy, dtMove];
+    end;
+    _OT_Zip:
+    begin
+      s := SaveFileToTempPath(Pictures.Items[iPicture]);
+      DropFileSource1.DragTypes := [dtCopy];
+    end
+    else goto NoDrag;
+  end;
+
+  if s.IsEmpty or not FileExists(s, False) then goto NoDrag;
+
+  DropFileTarget1.Target := nil;
+  DropFileSource1.Files.Add(s);
+  DropFileSource1.Execute;
+  Exit;
+
+NoDrag:
   if (Button = mbLeft) and (DisplayMode = _DM_Original) then
   begin
     LastCursor := Mouse.CursorPos;
@@ -563,6 +817,7 @@ begin
   begin
     CursorTracking := False;
   end;
+  DropFileSource1.Files.Clear;
 end;
 
 procedure TForm1.Image1MouseMove(Sender: TObject; Shift: TShiftState; X, Y: Integer);
@@ -586,20 +841,140 @@ begin
   end;
 end;
 
+procedure TForm1.DropFileTarget1Drop(Sender: TObject; ShiftState: TShiftState; APoint: TPoint; var Effect: Integer);
+begin
+  try
+    TThread.Synchronize(nil, procedure
+    var
+      FilePath: string;
+    begin
+      if DropFileSource1.DragInProgress   then Exit;
+      if DropFileSource1.Files.Count  > 0 then Exit;
+      if DropFileTarget1.Files.Count <> 1 then Exit;
+      CloseImages;
+
+      FilePath := DropFileTarget1.Files[0];
+      if FileExists(FilePath, False) then
+      begin
+        if ExtractFileExt(FilePath) = '.zip' then
+        begin
+          DirPath := FilePath;
+          OpenImagesFormZip(FilePath);
+        end
+        else
+        begin
+          DirPath := ExtractFilePath(FilePath);
+          OpenImagesFormFiles(DirPath);
+        end;
+      end
+      else
+      begin
+        if not DirectoryExists(FilePath, False) then Exit;
+
+        DirPath := IncludeTrailingPathDelimiter(FilePath);
+        FilePath := '';
+        OpenImagesFormFiles(DirPath);
+      end;
+
+      if Pictures.Count = 0 then Exit;
+
+      iPictureOld := -1;
+      iPicture := IndexOfFileName(ExtractFileName(FilePath));
+
+      BaseThread := JvThread1.Execute(nil);
+      BaseThread.Start;
+
+      ShowImage(iPicture);
+      FocusWindows;
+    end);
+  finally
+    if (Effect = DROPEFFECT_MOVE) then Effect := DROPEFFECT_NONE;
+  end;
+end;
+
+procedure TForm1.DropFileTarget1DragOver(Sender: TObject; ShiftState: TShiftState; APoint: TPoint; var Effect: Integer);
+begin
+  TThread.Synchronize(nil, procedure
+  begin
+    DropFileTarget1.Files.Clear;
+  end);
+end;
+
+procedure TForm1.DropFileSource1GetDragImage(Sender: TObject;
+  const DragSourceHelper: IDragSourceHelper; var Handled: Boolean);
+var
+  Pt: TPoint;
+  h: HWND;
+begin
+  if GetCursorPos(Pt) then
+  begin
+    TThread.Synchronize(nil, procedure
+    begin
+      h := ScrollBox1.Handle;
+    end);
+    Handled:= Succeeded(DragSourceHelper.InitializeFromWindow(
+      h, Pt, TCustomDropSource(Sender) as IDataObject));
+  end;
+end;
+
+procedure TForm1.DropFileSource1AfterDrop(Sender: TObject; DragResult: TDragResult; Optimized: Boolean);
+begin
+  TThread.Synchronize(nil, procedure
+  var
+    Filename: string;
+    HintTitle, HintMsg: string;
+  begin
+    if DropFileSource1.Files.Count <= 0 then Exit;
+
+    Filename := DropFileSource1.Files[0];
+
+    case OpenType of
+      _OT_Zip:
+        if string.StartsText(GetAppTempDir, Filename) then
+          if FileExists(Filename, False) then
+            DeleteFile(Filename);
+    end;
+
+    case DragResult of
+      drDropCopy, drDropMove: ;
+      else Exit;
+    end;
+
+    case OpenType of
+      _OT_Files:
+      case DragResult of
+        drDropCopy: HintTitle := '複製檔案';
+        drDropMove: HintTitle := '移動檔案';
+      end;
+      _OT_Zip:      HintTitle := '提取檔案';
+      else Exit;
+    end;
+    JvBalloonHint1.UseBalloonAsApplicationHint := True;
+    try
+      case OpenType of
+      _OT_Files: HintMsg := '來源：' + sLineBreak + IncludeTrailingPathDelimiter(DirPath) + Filename;
+      _OT_Zip: HintMsg := '來源：' + DirPath + sLineBreak +
+                         '提取：' + ExtractFileName(Filename);
+      end;
+      JvBalloonHint1.ActivateHintPos(nil, LastCursor, HintTitle, HintMsg, 2000);
+    finally
+      JvBalloonHint1.UseBalloonAsApplicationHint := False;
+    end;
+    DropFileSource1.Files.Clear;
+    DropFileTarget1.Target := ScrollBox1;
+  end);
+end;
+
 procedure TForm1.Splitter1CanResize(Sender: TObject; var NewSize: Integer; var Accept: Boolean);
 var
   Splitter: TSplitter ABSOLUTE Sender;
   N: Integer;
 begin
-  if NewSize > SplitterMax then
-    Accept := False;
+  if NewSize > SplitterMax then Accept := False;
 
   N := GetSplitterCurr;
   if (NewSize > SplitterMin) and (N < SplitterMin) then
-  begin
-    if Splitter.MinSize > SplitterMin then
-      Splitter.MinSize := SplitterMin;
-  end;
+    if Splitter.MinSize > SplitterMin then Splitter.MinSize := SplitterMin;
 end;
 
 procedure TForm1.Splitter1Moved(Sender: TObject);
@@ -621,8 +996,7 @@ end;
 
 procedure TForm1.SettingChange;
 begin
-  if Self.Showing then
-    SettingChanged := True;
+  if Self.Showing then SettingChanged := True;
 end;
 
 procedure TForm1.UpdateSplitterMax;
@@ -648,8 +1022,7 @@ begin
   Splitter1.Perform(WM_LBUTTONDOWN, MK_LBUTTON, A);
 
   B := GetPointCode(X, Y);
-  if A <> B then
-    Splitter1.Perform(WM_MOUSEMOVE, MK_LBUTTON, B);
+  if A <> B then Splitter1.Perform(WM_MOUSEMOVE, MK_LBUTTON, B);
   Splitter1.Perform(WM_LBUTTONUP, MK_LBUTTON, B);
 end;
 
@@ -669,17 +1042,25 @@ begin
   if _VS_ImageWating in ViewState then
   begin
     Exclude(ViewState, _VS_ImageWating);
-    Caption := Format('Loading[%u/%u] ...', [iPicture + 1, Pictures.Count]);
-
+    if IsLoading then
+      Caption := Format('Wating %s [%u/%u] ...', [Loading, iPicture + 1, Pictures.Count])
+    else
+      Caption := Format('Loading %s [%u/%u] ...', [iPicture + 1, Pictures.Count]);
     b := True;
   end;
+//  else
+//  begin
+//    if IsLoading then
+//      if OpenType <> _OT_Non then
+//        ShowLoadingInfo;
+//  end;
   if _VS_SizeChanged in ViewState then
   begin
     Exclude(ViewState, _VS_SizeChanged);
     b := True;
   end;
-  if b then
-    Exit;
+
+  if b then Exit;
 
   TTimer(Sender).Enabled := False;
   ShowImage;
@@ -699,6 +1080,13 @@ begin
   NextWICImage;
 end;
 
+procedure TForm1.PopupMenu1Popup(Sender: TObject);
+begin
+  N4.Enabled := OpenType <> _OT_Non;
+  N6.Enabled := OpenType <> _OT_Non;
+  N7.Enabled := OpenType = _OT_Files;
+end;
+
 // 切換 原始/最佳 大小
 // Toggle original/best size.
 procedure TForm1.N1Click(Sender: TObject);
@@ -706,14 +1094,11 @@ var
   Size: TSize;
   Point: TPoint;
 begin
-  if not GetCurrentImageSize(Size) then
-    Exit;
+  if not GetCurrentImageSize(Size) then Exit;
 
   Point := PopupMenu1.PopupPoint;
-  if (Point.X < 0) or (Point.X > Size.Width) then
-    Point.X := 0;
-  if (Point.Y < 0) or (Point.Y > Size.Height) then
-    Point.Y := 0;
+  if (Point.X < 0) or (Point.X > Size.Width)  then Point.X := 0;
+  if (Point.Y < 0) or (Point.Y > Size.Height) then Point.Y := 0;
 
   ViewOriginal(Point);
 end;
@@ -725,18 +1110,15 @@ var
   SizeF, SizeI, Size: TSize;
   R, M: TRect;
 begin
-  if not GetCurrentImageSize(SizeI) then
-    Exit;
+  if not GetCurrentImageSize(SizeI) then Exit;
 
   SizeF := TSize.Create(Self.Width - Self.ClientWidth, Self.Height - Self.ClientHeight);
   if GetReduceSize(Monitor.Width - SizeF.Width, Monitor.Height - SizeF.Height, SizeI.Width, SizeI.Height, True, Size) then
   begin
     Size := Size + SizeF;
     Size.Width := Size.Width + Splitter1.Width + ListView1.Width;
-    if Size.Width > Monitor.Width then
-      Size.Width := Monitor.Width;
-    if Size.Height > Monitor.Height then
-      Size.Height := Monitor.Height;
+    if Size.Width  > Monitor.Width  then Size.Width  := Monitor.Width;
+    if Size.Height > Monitor.Height then Size.Height := Monitor.Height;
 
     R := TRect.Create(Self.Left, Self.Top, Size.Width + Self.Left, Size.Height + Self.Top);
     M := Monitor.BoundsRect;
@@ -769,10 +1151,59 @@ begin
   end;
 end;
 
-procedure TForm1.ViewTipAdjust;
+procedure TForm1.N4Click(Sender: TObject);
 begin
-  StaticText1.Left := ScrollBox1.Left + ScrollBox1.ClientWidth - StaticText1.Width;
-  StaticText1.Top := ScrollBox1.Top + ScrollBox1.ClientHeight - StaticText1.Height;
+  case OpenType of
+    _OT_Files:
+    begin
+      if (iPicture >= 0) and (iPicture < Pictures.Count) then
+        BrowseByExplorer(DirPath, Pictures.Items[iPicture].Name, _FEO_All);
+    end;
+    _OT_Zip:
+      BrowseByExplorer(ExtractFileDir(DirPath), ExtractFileName(DirPath), _FEO_All);
+  end;
+end;
+
+procedure TForm1.N6Click(Sender: TObject);
+begin
+  case OpenType of
+    _OT_Files, _OT_Zip: DoCopyFileToClipboard(False);
+  end;
+end;
+
+procedure TForm1.N7Click(Sender: TObject);
+begin
+  case OpenType of
+    _OT_Files: DoCopyFileToClipboard(True);
+  end;
+end;
+
+procedure TForm1.ViewTipMode(bBlatant: Boolean);
+begin
+  if bBlatant then
+  begin
+    StaticText1.BorderStyle := sbsSingle;
+//    StaticText1.Font.Size := 12;
+  end
+  else
+  begin
+    StaticText1.BorderStyle := sbsNone;
+//    StaticText1.Font.Size := 12;
+  end;
+end;
+
+procedure TForm1.ViewTipAdjust(bCentral: Boolean);
+begin
+  if bCentral then
+  begin
+    StaticText1.Left := ScrollBox1.Left + (ScrollBox1.ClientWidth - StaticText1.Width) div 2;
+    StaticText1.Top := ScrollBox1.Top + (ScrollBox1.ClientHeight - StaticText1.Height) div 2;
+  end
+  else
+  begin
+    StaticText1.Left := ScrollBox1.Left + ScrollBox1.ClientWidth - StaticText1.Width;
+    StaticText1.Top := ScrollBox1.Top + ScrollBox1.ClientHeight - StaticText1.Height;
+  end;
 end;
 
 procedure TForm1.ViewSizeTip;
@@ -816,23 +1247,28 @@ var
   Max: Integer;
 begin
   Max := ScrollBox1.ClientWidth;
-  if Width > Max then
-    Image1.Width := Max
-  else
-    Image1.Width := Width;
-
+  if Width  > Max then Image1.Width  := Max else Image1.Width  := Width;
   Max := ScrollBox1.ClientHeight;
-  if Height > Max then
-    Image1.Height := Max
-  else
-    Image1.Height := Height;
+  if Height > Max then Image1.Height := Max else Image1.Height := Height;
 end;
 
-procedure TForm1.ShowPageInfo;
+procedure TForm1.ShowTip(const Text: string; Seconds: Byte; Color: TColor);
+begin
+  StaticText1.Caption := Text;
+  ViewTipMode(True);
+  ViewTipAdjust(True);
+  StaticText1.Show;
+  Timer2.Interval := Seconds * 1000;
+  Timer2.Enabled := True;
+end;
+
+procedure TForm1.ShowLoadingInfo;
 var
   I: Integer;
 begin
   I := iPicture;
+//  ViewTipMode(False);
+//  ViewTipAdjust(False);
   Caption := Format('%s[%u/%u] %s << %s', [Loading, I + 1, Pictures.Count, Pictures.Names[I], Title]);
 end;
 
@@ -873,14 +1309,12 @@ begin
       if Width > Height then
       begin
         GetScaledByWidth;
-        if Inward and (Size.Height > MaxHeight) then
-          GetScaledByHeight;
+        if Inward and (Size.Height > MaxHeight) then GetScaledByHeight;
       end
       else
       begin
         GetScaledByHeight;
-        if Inward and (Size.Width > MaxWidth) then
-          GetScaledByWidth;
+        if Inward and (Size.Width > MaxWidth) then GetScaledByWidth;
       end
     else
       GetScaledByWidth;
@@ -893,17 +1327,16 @@ begin
       if Height > Width then
       begin
         GetScaledByHeight;
-        if Inward and (Size.Width > MaxWidth) then
-          GetScaledByWidth;
+        if Inward and (Size.Width > MaxWidth) then GetScaledByWidth;
       end
       else
       begin
         GetScaledByWidth;
-        if Inward and (Size.Height > MaxHeight) then
-          GetScaledByHeight;
+        if Inward and (Size.Height > MaxHeight) then GetScaledByHeight;
       end
     else
       GetScaledByHeight;
+
     Result := True;
   end
   else
@@ -938,10 +1371,36 @@ begin
   end;
 end;
 
+function TForm1.SaveFileToTempPath(const PictureItem: TPictureItem): string;
+var
+  TempDir, Filename: string;
+  Stream: TFileStream;
+  ImageItem: TImageItem;
+begin
+  Result := '';
+  TempDir := GetAppTempDir;
+  if not DirectoryExists(TempDir, False) then
+    TDirectory.CreateDirectory(TempDir);
+
+  Filename := TempDir + ExtractFileName(Pictures.Items[iPicture].Name);
+
+  // Create a file, if the file exists, open it in write mode to override the file.
+  Stream := TFileStream.Create(Filename, fmCreate, fmShareDenyWrite);
+  if not Assigned(Stream) then Exit;
+  try
+    Stream.Seek(0, soBeginning);
+    FillChar(ImageItem, SizeOf(TImageItem), 0);
+    if LoadOriginal(PictureItem, ImageItem, -1, Stream) then
+      Result := Filename;
+  finally
+    Stream.Free;
+  end;
+end;
+
 procedure CopyStream(Source, Target: TStream; Size: UInt32); inline;
 begin
-  Target.Position := 0;
   Target.Size := Size;
+  Target.Position := 0;
   Target.CopyFrom(Source, Size);
 end;
 
@@ -951,10 +1410,10 @@ begin
   Gif.LoadFromStream(Source);
 end;
 
-function TForm1.LoadOriginal(const FileItem: TPictureItem; var ImageItem: TImageItem; FrameIndex: Integer; Buffer: TMemoryStream): Boolean;
+function TForm1.LoadOriginal(const FileItem: TPictureItem; var ImageItem: TImageItem; FrameIndex: Integer; Buffer: TStream): Boolean;
 var
   Stream: TStream;
-  MemoryStream: TMemoryStream;
+  DataStream: TStream;
   Header: TZipHeader;
   function LoadImage: TImageItem;
   var
@@ -962,13 +1421,12 @@ var
     Gif: TGIFImage;
   begin
     FillChar(Result, SizeOf(Result), 0);
-    MemoryStream.Position := 0;
+    DataStream.Position := 0;
     Gif := nil;
     WIC := TWICImage.Create;
-    if FrameIndex > 0 then
-      WIC.FrameIndex := FrameIndex;
     try
-      WIC.LoadFromStream(MemoryStream);
+      if FrameIndex > 0 then WIC.FrameIndex := FrameIndex;
+      WIC.LoadFromStream(DataStream);
       case WIC.ImageFormat of
         wifGif:
         begin
@@ -977,7 +1435,7 @@ var
             begin
               Gif := TGIFImage.Create;
               try
-                LoadGifFromStream(MemoryStream, Gif);
+                LoadGifFromStream(DataStream, Gif);
                 if Gif.Images.Count > 0 then
                 begin
                   FreeAndNil(WIC);
@@ -1001,7 +1459,7 @@ var
             FreeAndNil(WIC);
 
             Result.Slot.Multi := TWICImages.Create;
-            Result.Slot.Multi.LoadFromStream(MemoryStream);
+            Result.Slot.Multi.LoadFromStream(DataStream);
             Result.Mode := _PIT_MultiWIC;
             Exit;
           end;
@@ -1013,55 +1471,82 @@ var
       WIC := nil;
       Result.Mode := _PIT_WIC;
     finally
-      if Assigned(WIC) then
-        FreeAndNil(WIC);
-      if Assigned(Gif) then
-        FreeAndNil(Gif);
+      if Assigned(WIC) then FreeAndNil(WIC);
+      if Assigned(Gif) then FreeAndNil(Gif);
     end;
   end;
 begin
-//  Result := False;
-
   if Assigned(Buffer) then
-    MemoryStream := Buffer
+    DataStream := Buffer
   else
-    MemoryStream := TMemoryStream.Create;
-  try
+    DataStream := TMemoryStream.Create;
+  try          
     try
       case OpenType of
         _OT_Files:
         begin
-          MemoryStream.LoadFromFile(DirPath + FileItem.Name);
-          ImageItem := LoadImage;
+          if DataStream is TMemoryStream then
+            TMemoryStream(DataStream).LoadFromFile(DirPath + FileItem.Name)
+          else if DataStream is TFileStream then
+          begin
+            // 事實上這裡應該不需要，至少目前這隻程式的功能不會使用到，
+            // 因為，在此函數前將直接使用系統 API 來處理 移動 或 複製 檔案。
+            // + 檔案資料複製
+            Stream := TFileStream.Create(DirPath + FileItem.Name, fmOpenRead, fmShareDenyWrite);
+            try
+              DataStream.CopyFrom(Stream);
+            finally
+              Stream.Free;
+            end;
+            // - 檔案資料複製
+          end
+          else
+            raise Exception.CreateFmt('Unknown stream class "%s".', [DataStream.ClassName]);
+          if not (DataStream is TFileStream) then
+            ImageItem := LoadImage;
         end;
         _OT_Zip:
         begin
           EnterCriticalSection(ZipCS);
           try
             try
-              Zip.Read(FileItem.ID, Stream, Header);
-              CopyStream(Stream, MemoryStream, Header.UncompressedSize);
+              Zip.Read(FileItem.ID, Stream, Header); // 取得壓縮檔中目標資料串流
+              CopyStream(Stream, DataStream, Header.UncompressedSize); // 解碼(解壓縮)資料
             finally
-              if Assigned(Stream) then
-                FreeAndNil(Stream);
+              // 由 Zip.Read 中建立傳出的 Stream 是一個包裝著解碼函數的 Object class，
+              // 雖不是資料本身，但仍然是 Object class 有占用記憶體空間，也是需要釋放的。
+              if Assigned(Stream) then FreeAndNil(Stream);
             end;
-            ImageItem := LoadImage;
+            if not (DataStream is TFileStream) then
+              ImageItem := LoadImage;;
           finally
             LeaveCriticalSection(ZipCS);
           end;
         end;
-        else Exit(False);
+        else
+        begin
+          Exit(False);
+        end;
       end;
-    finally
-      if Assigned(Buffer) then
-        Buffer.SetSize(0)
-      else
-        FreeAndNil(MemoryStream);
+    except
+      on E: Exception do  
+      begin
+        {$IFDEF DEBUG}
+        DbgMsg('Load [%d] failure: %s' + sLineBreak + '%s', [FileItem.ID, FileItem.Name, E.Message]);
+        {$ENDIF DEBUG}
+        Exit(False);
+      end;
     end;
-  except on E: Exception do
-{$IFDEF DEBUG}
-    DbgMsg('Load [%d] failure: %s' + sLineBreak + '%s', [FileItem.ID, FileItem.Name, E.Message]);
-{$ENDIF DEBUG}
+  finally
+    if Assigned(Buffer) then
+    begin
+      if Buffer is TMemoryStream then
+        TMemoryStream(Buffer).SetSize(0);
+//      else if Buffer is TFileStream then
+//        TFileStream(Buffer).Position := 0;
+    end
+    else
+      FreeAndNil(DataStream);
   end;
   Result := (ImageItem.Mode <> _PIT_OBJ) and Assigned(ImageItem.Slot.Obj);
 end;
@@ -1136,7 +1621,7 @@ begin
       _PIT_MultiWIC:
       begin
         B := False;
-        WIC := Image.Slot.Multi.Buffer;
+        WIC := Image.Slot.Multi.Current;
       end;
       else
       begin
@@ -1172,10 +1657,12 @@ begin
       begin
         BmpBuf := TBitmap.Create;
         try
+          BmpBuf.Canvas.Lock;
           BmpBuf.SetSize(ThumbSize.Width, ThumbSize.Height);
           BmpBuf.Canvas.Draw((ThumbSize.Width - Thumbnail.Width) div 2, (ThumbSize.Height - Thumbnail.Height) div 2, Thumbnail);
           iThumbnail := ImageList_Add(ImageList1.Handle, BmpBuf.Handle, 0);
         finally
+          BmpBuf.Canvas.Unlock;
           BmpBuf.Free;
         end;
       end;
@@ -1238,6 +1725,7 @@ begin
         Pictures.Thumb[Index] := Item;
         Item.ImageIndex := iThumbnail;
         Item.Caption := IntToStr(Index + 1);
+        Item.SubItems.Add(PicItem.Name);
   //      DbgMsg('Add thumbnail[%d]: ImageList %d, ListView %d', [Index, iThumbnail, Item.Index]);
       finally
         ListView1.Items.EndUpdate;
@@ -1251,11 +1739,9 @@ begin
       FreeAndNil(Thumbnail);
 
     if bWIC then
-      if Assigned(WIC) then
-        FreeAndNil(WIC);
+      if Assigned(WIC) then FreeAndNil(WIC);
 
-    if Image.Assigned then
-      Image.Free;
+    if Image.Assigned then Image.Free;
   end;
 end;
 
@@ -1265,7 +1751,7 @@ begin
   Timer1.Enabled := True;
 end;
 
-procedure TForm1.ShowImage(Index: Integer; Mode: TDisplayMode);
+function TForm1.ShowImage(Index: Integer; Mode: TDisplayMode): Boolean;
 var
   Size: TSize;
   b: Boolean;
@@ -1274,28 +1760,25 @@ var
   WIC: TWICImage;
   Multi: TWICImages;
 begin
-  if Pictures.Count = 0 then
-    Exit;
-  if Index <> iPicture then
-    Exit;
-  if Closeing then
-    Exit;
+  Result := False;
+  if Pictures.Count = 0 then Exit;
+  if Index <> iPicture  then Exit;
+  if Closeing           then Exit;
 
   b := False;
-  FillChar(PicItem, SizeOf(PicItem), 0);
   try
+    FillChar(PicItem, SizeOf(PicItem), 0);
     PicItem := Pictures.Items[Index];
-    if PicItem.Image.Mode = _PIT_OBJ then
-      b := True
-    else if not PicItem.Image.Assigned then
-      b := True
-    else if not Assigned(PicItem.Thumb) then
-      b := True
   except on E: Exception do
 {$IFDEF DEBUG}
     DbgMsg('Item[%d/%d]: ' + sLineBreak + '%s', [Index + 1, Pictures.Count, E.Message]);
 {$ENDIF DEBUG}
   end;
+
+  if PicItem.Image.Mode = _PIT_OBJ    then b := True
+  else if not PicItem.Image.Assigned  then b := True
+  else if not Assigned(PicItem.Thumb) then b := True;
+
   if b then
   begin
     SetTimerImageWating;
@@ -1326,57 +1809,70 @@ begin
       Timer3.Enabled := False;
   end;
 
-  if ImageView.Assigned then
-    ImageView.Free;
-
-  DisplayMode := Mode;
+  if ImageView.Assigned then ImageView.Free;
 
   if Mode = _DM_Original then
   begin
     Image1.Stretch := False;
     Image1.Proportional := False;
+    b := False;
     case PicItem.Image.Mode of
       _PIT_WIC:
+      if LoadOriginal(PicItem, ImageView, 0) then
       begin
-        LoadOriginal(PicItem, ImageView, 0);
         Timer3.Enabled := False;
         WIC := ImageView.Slot.WIC;
         Image1.Width := WIC.Width;
         Image1.Height := WIC.Height;
         Image1.Picture.WICImage := WIC;
+        b := True;
       end;
       _PIT_GIF:
+      if LoadOriginal(PicItem, ImageView, 0) then
       begin
-        LoadOriginal(PicItem, ImageView, 0);
         Timer3.Enabled := False;
         Image1.Width := ImageView.Slot.GIF.Width;
         Image1.Height := ImageView.Slot.GIF.Height;
         Image1.Picture.Graphic := ImageView.Slot.GIF;
         if Image1.Picture.Graphic is TGIFImage then
           TGIFImage(Image1.Picture.Graphic).Animate := True;
+        b := True;
       end;
       _PIT_MultiWIC:
+      if LoadOriginal(PicItem, ImageView, PicItem.Image.Slot.Multi.FrameIndex) then
       begin
-        LoadOriginal(PicItem, ImageView, PicItem.Image.Slot.Multi.FrameIndex);
         Multi := ImageView.Slot.Multi;
-        WIC := Multi.Buffer;
+        WIC := Multi.Current;
         Image1.Width := WIC.Width;
         Image1.Height := WIC.Height;
         Image1.Picture.WICImage := WIC;
         Timer3.Enabled := True;
+        b := True;
       end;
       else
       begin
         Timer3.Enabled := False;
       end;
     end;
-    ShowPageInfo;
-    Exit;
+    if b then
+    begin
+      DisplayMode := Mode;
+    end
+    else
+    begin
+      case OpenType of
+        _OT_Files, _OT_Zip:
+        begin
+          ShowMessageFmt('無法載入影像：'+sLineBreak+'%s', [IncludeTrailingPathDelimiter(DirPath) + PicItem.Name]);
+        end;
+        else ShowMessage('未開啟檔案！');
+      end;
+    end;
+    ShowLoadingInfo;
+    Exit(b);
   end;
 
-  b := GetReduceInView(PicItem, True, Size);
-
-  if b then
+  if GetReduceInView(PicItem, True, Size) then
   begin
     Image1.Width := Size.Width;
     Image1.Height := Size.Height;
@@ -1401,7 +1897,7 @@ begin
       end;
       _PIT_MultiWIC:
       begin
-        ImageView.Slot.WIC := PicItem.Image.Slot.Multi.Buffer.CreateScaledCopy(Size.Width, Size.Height, wipmHighQualityCubic);
+        ImageView.Slot.WIC := PicItem.Image.Slot.Multi.Current.CreateScaledCopy(Size.Width, Size.Height, wipmHighQualityCubic);
         ImageView.Mode := _PIT_WIC;
         Image1.Stretch := False;
         Image1.Proportional := False;
@@ -1435,7 +1931,7 @@ begin
       end;
       _PIT_MultiWIC:
       begin
-        WIC := PicItem.Image.Slot.Multi.Buffer;
+        WIC := PicItem.Image.Slot.Multi.Current;
         ImageView.Slot.WIC := TWICImage.Create;
         ImageView.Slot.WIC.Assign(WIC);
         ImageView.Mode := _PIT_WIC;
@@ -1449,19 +1945,23 @@ begin
       end;
     end;
   end;
-  ShowPageInfo;
+  DisplayMode := Mode;
+  ShowLoadingInfo;
   iPictureOld := Index;
+  Result := True;
 end;
 
-procedure TForm1.ShowImage(Mode: TDisplayMode);
+function TForm1.ShowImage(Mode: TDisplayMode): Boolean;
 begin
   if Assigned(Pictures) then
-    ShowImage(iPicture, Mode);
+    Result := ShowImage(iPicture, Mode)
+  else
+    Result := False;
 end;
 
-procedure TForm1.ShowImage;
+function TForm1.ShowImage: Boolean;
 begin
-  ShowImage(DisplayMode);
+  Result := ShowImage(DisplayMode);
 end;
 
 procedure TForm1.ViewOriginal(const Point: TPoint);
@@ -1479,10 +1979,7 @@ begin
   else
     ShowImage(_DM_Original);
 
-  if W > H then
-    Scale := Image1.Width / W
-  else
-    Scale := Image1.Height / H;
+  if W > H then Scale := Image1.Width / W else Scale := Image1.Height / H;
 
   ScrollClient := ScrollBox1.ClientRect.Size;
 
@@ -1523,11 +2020,11 @@ begin
     _PIT_MultiWIC:
     begin
       PicItem.Image.Slot.Multi.Next;
-      WIC := PicItem.Image.Slot.Multi.Buffer;
+      WIC := PicItem.Image.Slot.Multi.Current;
 
       if DisplayMode = _DM_Original then
       begin
-        Image1.Width := WIC.Width;
+        Image1.Width  := WIC.Width;
         Image1.Height := WIC.Height;
         Image1.Picture.WICImage := WIC;
       end
@@ -1535,8 +2032,7 @@ begin
       begin
         if GetReduceInView(PicItem, True, Size) then
         begin
-          if ImageView.Assigned then
-            ImageView.Free;
+          if ImageView.Assigned then ImageView.Free;
           ImageView.Slot.WIC := WIC.CreateScaledCopy(Size.Width, Size.Height, wipmHighQualityCubic);
           ImageView.Mode := _PIT_WIC;
           Image1.Picture.WICImage := ImageView.Slot.WIC;
@@ -1566,10 +2062,8 @@ begin
   try
     I := iPicture;
     ListCount := ListView1.Items.Count;
-    if ListCount < 1 then
-      Exit;
-    if I >= ListCount then
-      Exit;
+    if ListCount < 1  then Exit;
+    if I >= ListCount then Exit;
     case Turn of
       _TP_First: I := 0;
       _TP_Last: I := ListCount - 1;
@@ -1580,15 +2074,14 @@ begin
     if not Assigned(ThumbItem) then
       Exit
     else
-      if ListView1.Items.IndexOf(ThumbItem) < 0 then
-        Exit;
+      if ListView1.Items.IndexOf(ThumbItem) < 0 then Exit;
     iPicture := I;
 {$IFDEF DEBUG}
     DbgMsg('Scroll to %d.', [iPicture]);
 {$ENDIF DEBUG}
     CtlScrollTo(ListView1, I);
     LVItem.stateMask := LVIS_SELECTED or LVIS_FOCUSED;
-    LVItem.state := LVIS_SELECTED or LVIS_FOCUSED;
+    LVItem.state     := LVIS_SELECTED or LVIS_FOCUSED;
     ListView1.Perform(LVM_SETITEMSTATE, I, LPARAM(@LVItem));
     ShowImage;
   finally
@@ -1614,8 +2107,7 @@ begin
 
   JvThread1.TerminateWaitFor(False);
 
-  if Assigned(Pictures) then
-    Pictures.Clear;
+  if Assigned(Pictures) then Pictures.Clear;
 
   ListView1.Clear;
   ImageList1.Clear;
@@ -1626,8 +2118,7 @@ begin
     FreeAndNil(Zip);
   end;
 
-  if ImageView.Assigned then
-    ImageView.Free;
+  if ImageView.Assigned then ImageView.Free;
 
   Image1.Picture.Graphic := nil;
 
@@ -1658,7 +2149,6 @@ var
   end;
 begin
   Title := GetLastFolderName(Directory);
-  OpenType := _OT_Files;
   I := 0;
   EnumFiles(Directory,
     procedure(const FileName: string)
@@ -1670,6 +2160,7 @@ begin
       end;
     end);
   Pictures.Sort;
+  OpenType := _OT_Files;
 end;
 
 procedure TForm1.OpenImagesFormZip(const Path: string);
@@ -1682,12 +2173,11 @@ var
 begin
   if Assigned(Zip) then
   begin
+  //raise Exception.Create('Zip is not nil, it seems that the previous has not been released, this shouldn''t happen.');
     FreeAndNil(Zip);
   end;
-  //raise Exception.Create('Zip is not nil, it seems that the previous has not been released, this shouldn''t happen.');
 
   Title := ChangeFileExt(ExtractFileName(Path), '');
-  OpenType := _OT_Zip;
 
   InitializeCriticalSection(ZipCS);
   Zip := TZipFile.Create;
@@ -1704,8 +2194,12 @@ begin
     begin
       if Infos[I].UTF8Support then
         FileName := TEncoding.UTF8.GetString(Infos[I].FileName)
+      else if Zip.Encoding.CodePage = 437 then
+        FileName := UTF8ArrayToString(Infos[I].FileName)
       else
         FileName := Zip.Encoding.GetString(Infos[I].FileName);
+
+      FileName := FileName.Replace('/', PathDelim);
 
       if CheckExt(FileName) then
       begin
@@ -1718,6 +2212,7 @@ begin
   end;
   Pictures.Count := J;
   Pictures.Sort;
+  OpenType := _OT_Zip;
 end;
 
 function TForm1.IndexOfFileName(const FileName: string): Integer;
@@ -1726,8 +2221,8 @@ var
   I: Integer;
 begin
   Count := Pictures.Count;
-  if Count = 0 then
-    Exit(-1);
+  if Count = 0 then Exit(-1);
+
   if not FileName.IsEmpty then
     for I := 0 to Count - 1 do
       if CompareText(Pictures.Names[I], FileName) = 0 then
@@ -1735,46 +2230,28 @@ begin
   Result := 0;
 end;
 
-procedure TForm1.OnDropFiles(Sender: TObject; WinControl: TWinControl);
+procedure TForm1.DoCopyFileToClipboard(bMove: Boolean);
 var
-  FilePath: string;
+  s: string;
 begin
-  CloseImages;
+  if iPicture < 0 then Exit;
+  if iPicture >= Pictures.Count then Exit;
 
-  FilePath := DropFiles.First;
-  if FileExists(FilePath, False) then
-  begin
-    if ExtractFileExt(FilePath) = '.zip' then
+  SaveFileToTempPath(Pictures.Items[iPicture]);
+  case OpenType of
+    _OT_Files:
     begin
-      DirPath := FilePath;
-      OpenImagesFormZip(FilePath);
-    end
-    else
-    begin
-      DirPath := ExtractFilePath(FilePath);
-      OpenImagesFormFiles(DirPath);
+      s := DirPath + Pictures.Items[iPicture].Name;
+      CopyFileToClipboard(s, bMove);
+      if bMove then ShowTip('已移動檔案') else ShowTip('已複製檔案');
     end;
-  end
-  else
-  begin
-    if not DirectoryExists(FilePath, False) then
-      Exit;
-    DirPath := IncludeTrailingPathDelimiter(FilePath);
-    FilePath := '';
-    OpenImagesFormFiles(DirPath);
+    _OT_Zip:
+    begin
+      s := SaveFileToTempPath(Pictures.Items[iPicture]);
+      CopyFileToClipboard(s, True);
+      ShowTip('已提取檔案');
+    end;
   end;
-
-  if Pictures.Count = 0 then
-    Exit;
-
-  iPictureOld := -1;
-  iPicture := IndexOfFileName(ExtractFileName(FilePath));
-
-  BaseThread := JvThread1.Execute(nil);
-  BaseThread.Start;
-
-  ShowImage(iPicture);
-  FocusWindows;
 end;
 
 procedure TForm1.JvThread1Begin(Sender: TObject);
@@ -1787,7 +2264,6 @@ var
   Max: Integer;
   Count: Integer;
   I: Integer;
-//  Thread: TJvBaseThread;
   procedure Load(iStart, iEnd: Integer);
   var
     I: Integer;
@@ -1795,12 +2271,8 @@ var
     for I := iStart to iEnd do
     begin
       Loading := IntToStr((Count * 100) div Max) + '%';
-      TThread.Synchronize(BaseThread, procedure
-      begin
-        ShowPageInfo;
-      end);
-      if BaseThread.Terminated then
-        Exit;
+      TThread.Synchronize(BaseThread, ShowLoadingInfo);
+      if BaseThread.Terminated then Exit;
       LoadPicture(I);
       Inc(Count);
     end;
@@ -1812,11 +2284,9 @@ begin
     I := iPicture;
   end);
 
-  if not Assigned(MemBuf) then
-    MemBuf := TMemoryStream.Create;
-
-  CoInitializeEx(nil, COINIT_MULTITHREADED or COINIT_DISABLE_OLE1DDE);
+  CoInitializeEx(nil, COINIT_MULTITHREADED or COINIT_SPEED_OVER_MEMORY);
   try
+    if not Assigned(MemBuf) then MemBuf := TMemoryStream.Create;
     try
       Count := 0;
       Load(I, Max - 1);
@@ -1833,7 +2303,7 @@ procedure TForm1.JvThread1FinishAll(Sender: TObject);
 begin
   IsLoading := False;
   Loading := '';
-  ShowPageInfo;
+  ShowLoadingInfo;
 end;
 
 procedure TForm1.JvThread2Execute(Sender: TObject; Params: Pointer);
@@ -1850,9 +2320,8 @@ begin
 
   Image.Mode := _PIT_WIC;
   Image.Slot.Obj := nil;
-  if not Assigned(P.WIC) then
-    if not LoadOriginal(P.Pic, Image, P.iFrame) then
-      raise Exception.CreateFmt('Multiple images [%d]: %s loading frame %d failed.', [P.Pic.ID, P.Pic.Name, P.iFrame]);
+  if not Assigned(P.WIC) and not LoadOriginal(P.Pic, Image, P.iFrame) then
+    raise Exception.CreateFmt('Multiple images [%d]: %s loading frame %d failed.', [P.Pic.ID, P.Pic.Name, P.iFrame]);
 
   WIC := nil;
   try
@@ -1887,10 +2356,8 @@ begin
     GCE := TGIFGraphicControlExtension.Create(Frame);
     GCE.Delay := 20;
   finally
-    if Assigned(Image.Slot.WIC) then
-      Image.Slot.WIC.Free;
-    if Assigned(WIC) then
-      WIC.Free;
+    if Assigned(Image.Slot.WIC) then Image.Slot.WIC.Free;
+    if Assigned(WIC) then WIC.Free;
   end;
 end;
 
@@ -1904,17 +2371,15 @@ begin
   SettingChanged := False;
   FileName := IniName;
   Splitter1.Tag := ListView1.Width;
-  if not FileExists(FileName, False) then
-    Exit;
+  if not FileExists(FileName, False) then Exit;
+
   Ini := TMemIniFile.Create(FileName);
   try
     b := Ini.ReadBool(SettingSection[_AS_Layout], SettingIdent[_ASL_ThumbnailList], True);
     N :=  Ini.ReadInteger(SettingSection[_AS_Layout], SettingIdent[_ASL_ThumbnailMargin], -1);
 
-    if N > SplitterMax then
-      N := SplitterMax;
-    if N <= SplitterMin then
-      N := ListView1.Width;
+    if N >  SplitterMax then N := SplitterMax;
+    if N <= SplitterMin then N := ListView1.Width;
 
     Splitter1.Tag := N;
     if b then
@@ -1933,8 +2398,7 @@ var
   N: Integer;
   b: Boolean;
 begin
-  if not SettingChanged then
-    Exit;
+  if not SettingChanged then Exit;
 
   FileName := IniName;
   Ini := TMemIniFile.Create(FileName);
@@ -1942,15 +2406,33 @@ begin
     N := GetSplitterCurr;
     b := N > SplitterMin;
     Ini.WriteBool(SettingSection[_AS_Layout], SettingIdent[_ASL_ThumbnailList], b);
-    if not b then
-      N := Splitter1.Tag;
-    if N <= SplitterMin then
-      N := -1;
+    if not b then            N := Splitter1.Tag;
+    if N <= SplitterMin then N := -1;
     Ini.WriteInteger(SettingSection[_AS_Layout], SettingIdent[_ASL_ThumbnailMargin], N);
     Ini.UpdateFile;
   finally
     Ini.Free;
   end;
+end;
+
+{ TForm1.TImageObj }
+
+function TForm1.TImageObj.GetSize(out ASize: TSize): Boolean;
+begin
+  if not Assigned(Obj) then Exit(False);
+
+  if      Obj is TWICImages then ASize := Multi.CurrentImageSize
+  else if Obj is TGIFImage  then ASize := TSize.Create(GIF.Width, GIF.Height)
+  else if Obj is TWICImage  then ASize := TSize.Create(WIC.Width, WIC.Height)
+  else Exit(False);
+
+  Result := True;
+end;
+
+function TForm1.TImageObj.GetSize: TSize;
+begin
+  if not GetSize(Result) then
+    raise Exception.Create('Unable get image size.');
 end;
 
 { TForm1.TImageItem }
@@ -1968,9 +2450,6 @@ begin
   Self.Slot.Obj := nil;
   Self.Mode := _PIT_OBJ;
   FreeAndNil(Image.Slot.Obj);
-
-//  if (Image.Mode < Low(TImageType)) or (Image.Mode > High(TImageType)) then
-//    raise Exception.CreateFmt('Unknown image mode[%d].', [Integer(Image.Mode)]);
 end;
 
 { TForm1.TPictureList }
@@ -1979,37 +2458,32 @@ procedure TForm1.TPictureList.Notify(const Value: TPictureItem; Action: TCollect
 begin
   if Action = cnRemoved then
   begin
-    if Value.Image.Assigned then
-      Value.Image.Free;
+    if Value.Image.Assigned then Value.Image.Free;
   end;
   inherited;
 end;
 
 procedure TForm1.TPictureList.SetId(Index, Id: Integer);
 begin
-  if (Index < 0) or (Index >= Count) then
-    ErrorArgumentOutOfRange;
+  if (Index < 0) or (Index >= Count) then ErrorArgumentOutOfRange;
   List[Index].ID := Id;
 end;
 
 function TForm1.TPictureList.GetId(Index: Integer): Integer;
 begin
-  if (Index < 0) or (Index >= Count) then
-    ErrorArgumentOutOfRange;
+  if (Index < 0) or (Index >= Count) then ErrorArgumentOutOfRange;
   Result := List[Index].ID;
 end;
 
 procedure TForm1.TPictureList.SetName(Index: Integer; const Name: string);
 begin
-  if (Index < 0) or (Index >= Count) then
-    ErrorArgumentOutOfRange;
+  if (Index < 0) or (Index >= Count) then ErrorArgumentOutOfRange;
   List[Index].Name := Name;
 end;
 
 function TForm1.TPictureList.GetName(Index: Integer): string;
 begin
-  if (Index < 0) or (Index >= Count) then
-    ErrorArgumentOutOfRange;
+  if (Index < 0) or (Index >= Count) then ErrorArgumentOutOfRange;
   Result := List[Index].Name;
 end;
 
@@ -2058,8 +2532,7 @@ function TForm1.TPictureList.GetImage(Index: Integer; out Image: TObject; out Th
 var
   PicItem: TPictureItem;
 begin
-  if (Index < 0) or (Index >= Count) then
-    ErrorArgumentOutOfRange;
+  if (Index < 0) or (Index >= Count) then ErrorArgumentOutOfRange;
   PicItem := List[Index];
   Image := PicItem.Image.Slot.Obj;
   Thumb := PicItem.Thumb;
@@ -2070,8 +2543,7 @@ function TForm1.TPictureList.GetImage(Index: Integer; out Image: TObject): TImag
 var
   PicItem: TPictureItem;
 begin
-  if (Index < 0) or (Index >= Count) then
-    ErrorArgumentOutOfRange;
+  if (Index < 0) or (Index >= Count) then ErrorArgumentOutOfRange;
   PicItem := List[Index];
   Image := PicItem.Image.Slot.Obj;
   Result := PicItem.Image.Mode;
@@ -2089,27 +2561,23 @@ end;
 
 function TForm1.TPictureList.GetWIC(Index: Integer): TWICImage;
 begin
-  if GetImage(Index, TObject(Result)) <> _PIT_WIC then
-    Result := nil;
+  if GetImage(Index, TObject(Result)) <> _PIT_WIC then Result := nil;
 end;
 
 function TForm1.TPictureList.GetGIF(Index: Integer): TGIFImage;
 begin
-  if GetImage(Index, TObject(Result)) <> _PIT_GIF then
-    Result := nil;
+  if GetImage(Index, TObject(Result)) <> _PIT_GIF then Result := nil;
 end;
 
 procedure TForm1.TPictureList.SetThumb(Index: Integer; Item: TListItem);
 begin
-  if (Index < 0) or (Index >= Count) then
-    ErrorArgumentOutOfRange;
+  if (Index < 0) or (Index >= Count) then ErrorArgumentOutOfRange;
   List[Index].Thumb := Item;
 end;
 
 function TForm1.TPictureList.GetThumb(Index: Integer): TListItem;
 begin
-  if (Index < 0) or (Index >= Count) then
-    ErrorArgumentOutOfRange;
+  if (Index < 0) or (Index >= Count) then ErrorArgumentOutOfRange;
   Result := List[Index].Thumb;
 end;
 

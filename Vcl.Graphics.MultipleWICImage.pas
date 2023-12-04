@@ -20,7 +20,7 @@ type
 
   TWICImageEx = class(TWICImage)
   private
-    FKeepSource: Boolean;
+//    FKeepSource: Boolean;
     FSource: TDataSource;
   public
     procedure Assign(Source: TPersistent); override;
@@ -36,10 +36,12 @@ type
     FFrameIndex: LongWord;
     FSourceStream: TMemoryStream;
     FSource: TDataSource;
-    FBuffer: TWICImage;
-    procedure SetBuffer(WICImage: TWICImage);
-    function GetBuffer: TWICImage;
-    procedure SetPosition(NewFrameIndex: LongWord);
+    FCurrent: TWICImage;
+    procedure ExceptionImageFailed;
+//    procedure SetBuffer(WICImage: TWICImage);
+    function GetCurrent: TWICImage;
+    function GetCurrentImageSize: TSize;
+    procedure SetFrameIndex(NewIndex: LongWord);
   public
     constructor Create; reintroduce;
     destructor Destroy; override;
@@ -50,11 +52,15 @@ type
     procedure Next;
     function ReadImage(Index: LongWord): TWICImageEx;
     procedure ReadImages(Renew: Boolean = True);
-    property FrameIndex: LongWord read FFrameIndex write FFrameIndex;
-    property Buffer: TWICImage read GetBuffer write FBuffer;
+    property FrameIndex: LongWord read FFrameIndex write SetFrameIndex;
+    property Current: TWICImage read GetCurrent;
+    property CurrentImageSize: TSize read GetCurrentImageSize;
   end;
 
 implementation
+
+resourcestring
+  ErrFmtImageFailed = 'Unable to extract image at index %d from %s';
 
 { TMWICImageEx }
 
@@ -117,6 +123,20 @@ begin
   inherited;
 end;
 
+procedure TWICImages.ExceptionImageFailed;
+var
+  s: string;
+begin
+  if FSource.Filename.IsEmpty then
+    if FSource.Stream is TFileStream then
+      s := 'file: ' + sLineBreak + TFileStream(FSource.Stream).FileName
+    else
+      s := 'stream.'
+  else
+    s := 'file: ' + sLineBreak + FSource.Filename;
+  raise Exception.CreateFmt(ErrFmtImageFailed, [FFrameIndex, s]) at ReturnAddress;
+end;
+
 procedure TWICImages.LoadFromStream(Stream: TStream);
 begin
   Self.Clear;
@@ -156,16 +176,16 @@ begin
   Result.LoadFromStream(FSourceStream);
 end;
 
-procedure TWICImages.SetBuffer(WICImage: TWICImage);
-begin
-  FBuffer := WICImage;
-end;
+//procedure TWICImages.SetBuffer(WICImage: TWICImage);
+//begin
+//  FBuffer := WICImage;
+//end;
 
-function TWICImages.GetBuffer: TWICImage;
+function TWICImages.GetCurrent: TWICImage;
 begin
-  if Assigned(FBuffer) then
+  if Assigned(FCurrent) then
   begin
-    Result := FBuffer;
+    Result := FCurrent;
   end
   else
   begin
@@ -179,15 +199,26 @@ begin
     begin
       Result := ReadImage(FFrameIndex);
     end;
+    FCurrent := Result;
   end;
 end;
 
-procedure TWICImages.SetPosition(NewFrameIndex: LongWord);
+function TWICImages.GetCurrentImageSize: TSize;
+var
+  Image: TWICImage;
 begin
-  if NewFrameIndex = FFrameIndex then
-    Exit;
+  Image := GetCurrent;
+  if not Assigned(Image) then
+    ExceptionImageFailed;
+  Result := TSize.Create(Image.Width, Image.Height);
+end;
 
-  FFrameIndex := NewFrameIndex;
+procedure TWICImages.SetFrameIndex(NewIndex: LongWord);
+begin
+  if NewIndex = FFrameIndex then
+    Exit;
+  FCurrent := nil;
+  FFrameIndex := NewIndex;
 end;
 
 function TWICImages.ReadImage(Index: LongWord): TWICImageEx;
@@ -253,8 +284,8 @@ begin
   Inc(FFrameIndex);
   if FFrameIndex >= FFrameCount then
     FFrameIndex := 0;
-  if Assigned(FBuffer) then
-    FBuffer.Assign(ReadImage(FFrameIndex));
+  if Assigned(FCurrent) then
+    FCurrent := ReadImage(FFrameIndex);
 end;
 
 procedure TWICImages.Prev;
@@ -263,8 +294,8 @@ begin
     Dec(FFrameIndex)
   else
     FFrameIndex := FFrameCount - 1;
-  if Assigned(FBuffer) then
-    FBuffer.Assign(ReadImage(FFrameIndex));
+  if Assigned(FCurrent) then
+    FCurrent := ReadImage(FFrameIndex);
 end;
 
 end.

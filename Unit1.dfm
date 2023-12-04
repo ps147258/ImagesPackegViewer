@@ -106,11 +106,14 @@ object Form1: TForm1
     RowSelect = True
     ParentDoubleBuffered = False
     ParentFont = False
+    ParentShowHint = False
+    ShowHint = True
     SmallImages = ImageList1
     SortType = stData
     TabOrder = 2
     ViewStyle = vsSmallIcon
     OnCompare = ListView1Compare
+    OnInfoTip = ListView1InfoTip
     OnSelectItem = ListView1SelectItem
     ExplicitLeft = 341
     ExplicitHeight = 479
@@ -149,7 +152,7 @@ object Form1: TForm1
     Enabled = False
     Interval = 100
     OnTimer = Timer1Timer
-    Left = 16
+    Left = 8
     Top = 56
   end
   object Timer2: TTimer
@@ -158,7 +161,8 @@ object Form1: TForm1
     Top = 56
   end
   object PopupMenu1: TPopupMenu
-    Left = 112
+    OnPopup = PopupMenu1Popup
+    Left = 168
     Top = 56
     object N1: TMenuItem
       Caption = #20999#25563' '#21407#22987'/'#26368#20339' '#22823#23567' ('#28369#40736#40670#20841#19979')'
@@ -167,6 +171,24 @@ object Form1: TForm1
     object N2: TMenuItem
       Caption = #20381#24433#20687#25918#22823#35222#31383' (F2)'
       OnClick = N2Click
+    end
+    object N3: TMenuItem
+      Caption = '-'
+    end
+    object N4: TMenuItem
+      Caption = #22312' Explorer '#20013#38283#21855'... (Ctrl+E)'
+      OnClick = N4Click
+    end
+    object N5: TMenuItem
+      Caption = '-'
+    end
+    object N6: TMenuItem
+      Caption = #35079#35069#27284#26696#21040'... (Ctrl+C '#25110' Ctrl+'#28369#40736#24038#37749#25302#21205')'
+      OnClick = N6Click
+    end
+    object N7: TMenuItem
+      Caption = #31227#21205#27284#26696#21040'... (Ctrl+X '#25110' Shift+'#28369#40736#24038#37749#25302#21205')'
+      OnClick = N7Click
     end
   end
   object ImageList1: TImageList
@@ -190,7 +212,30 @@ object Form1: TForm1
     Enabled = False
     Interval = 100
     OnTimer = Timer3Timer
-    Left = 16
+    Left = 104
+    Top = 56
+  end
+  object DropFileTarget1: TDropFileTarget
+    DragTypes = [dtCopy, dtMove, dtLink]
+    OnDragOver = DropFileTarget1DragOver
+    OnDrop = DropFileTarget1Drop
+    Target = ScrollBox1
+    WinTarget = 0
+    OptimizedMove = True
+    Left = 32
+    Top = 112
+  end
+  object DropFileSource1: TDropFileSource
+    DragTypes = [dtCopy, dtMove]
+    OnAfterDrop = DropFileSource1AfterDrop
+    OnGetDragImage = DropFileSource1GetDragImage
+    ShowImage = True
+    Left = 128
+    Top = 112
+  end
+  object JvBalloonHint1: TJvBalloonHint
+    CustomAnimationTime = 0
+    Left = 224
     Top = 112
   end
 end
