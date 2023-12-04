@@ -17,6 +17,10 @@ F2:最佳化視窗大小
 單影像容器使用TWICImage，可以支援有.NET 3.0的Windows XP SP2或以上的系統，單影像可支援 BMP, GIF, ICO, JPEG, PNG, TIFF。
 動態影像支援GIF，但由於處理多影像格式會大幅影響處理速度，因此GIF縮圖仍然使用單影像，這意味著縮圖顯示將非動態，而顯示會以首位影格。
 
+**拖放元件**
+DragAndDrop 元件包.
+用途：OLE 資料拖放操作，檔案拖放。
+https://github.com/landrix/The-Drag-and-Drop-Component-Suite-for-Delphi
 
 Description:
 Quickly process large images to screen size in memory, series of files are loading for quick browsing of multi-image files.
@@ -36,3 +40,8 @@ Right: next
 
 Single image container using TWICImage, can support Windows XP SP2 or above with .NET 3.0. so single image can support BMP, GIF, ICO, JPEG, PNG, TIFF.
 Animated images support GIF, but since processing multiple image formats will greatly affect the processing speed, GIF thumbnails still use a single image, which means that the thumbnail display will not be dynamic, and the display will be the first frame.
+
+**Components**
+DragAndDrop component suite.
+Purpose: OLE data drag-and-drop operation, file drag-and-drop.
+https://github.com/landrix/The-Drag-and-Drop-Component-Suite-for-Delphi
