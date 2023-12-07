@@ -28,7 +28,6 @@ type
   TForm1 = class(TForm)
     ImageList1: TImageList;
     JvThread1: TJvThread;
-    JvThread2: TJvThread;
     Timer1: TTimer; // 延遲載入
     Timer2: TTimer; // 訊息
     Timer3: TTimer; // 多圖動態顯示
@@ -64,7 +63,6 @@ type
     procedure JvThread1Begin(Sender: TObject);
     procedure JvThread1Execute(Sender: TObject; Params: Pointer);
     procedure JvThread1FinishAll(Sender: TObject);
-    procedure JvThread2Execute(Sender: TObject; Params: Pointer);
     procedure ScrollBox1Resize(Sender: TObject);
     procedure ScrollBox1DblClick(Sender: TObject);
     procedure ListView1Compare(Sender: TObject; Item1, Item2: TListItem; Data: Integer; var Compare: Integer);
@@ -113,7 +111,8 @@ type
       ID: Integer;
       Name: string;
       Image: TImageItem;
-      Thumb: TListItem;
+      iThumb: Integer;
+      ThumbItem: TListItem;
     end;
     TPictureList = class(TList<TPictureItem>)
     private
@@ -121,6 +120,8 @@ type
       function GetId(Index: Integer): Integer;
       procedure SetName(Index: Integer; const Name: string);
       function GetName(Index: Integer): string;
+      procedure SetThumbIndex(Index: Integer; iThumb: Integer);
+      function GetThumbIndex(Index: Integer): Integer;
     protected
       procedure Notify(const Value: TPictureItem; Action: TCollectionNotification); override;
     public
@@ -133,7 +134,8 @@ type
       procedure SetGIF(Index: Integer; Image: TGIFImage);
       procedure SetMultiWIC(Index: Integer; Images: TWICImages);
 
-      procedure SetThumb(Index: Integer; Item: TListItem);
+      procedure SetThumbItem(Index: Integer; Item: TListItem);
+      function GetThumbItem(Index: Integer): TListItem;
 
       function GetImage(Index: Integer; out Image: TObject; out Thumb: TListItem): TImageType; overload;
       function GetImage(Index: Integer; out Image: TObject): TImageType; overload;
@@ -143,20 +145,21 @@ type
       function GetWIC(Index: Integer): TWICImage;
       function GetGIF(Index: Integer): TGIFImage;
 
-      function GetThumb(Index: Integer): TListItem;
 
       property Id[Index: Integer]: Integer read GetId write SetId;
       property Names[Index: Integer]: string read GetName write SetName;
-      property Thumb[Index: Integer]: TListItem read GetThumb write SetThumb;
+      property ThumbItem[Index: Integer]: TListItem read GetThumbItem write SetThumbItem;
+      property iThumb[Index: Integer]: Integer read GetThumbIndex write SetThumbIndex;
     end;
     TGifFrameBuffer = record
       iFrame: Integer;
       Pic: TPictureItem;
       WIC: TWICImage;
-//      Bmp: TBitmap;
       Frame: TGIFFrame;
     end;
     PGifFrameBuffer = ^TGifFrameBuffer;
+    TItemIndex = type Integer;
+    TPictureIndex = type Integer;
   private
     Processors: DWORD;       // 處理器數量
     SettingChanged: Boolean; // 用於表示設定是否有變動
@@ -176,10 +179,12 @@ type
     ZipCS: TRTLCriticalSection; // 防止 Zip 被同時存取，若 Class 沒有表明可同時多執行續，處理時都應預設為單一處理。
     Zip: TZipFile;
     MemBuf: TMemoryStream;   // 緩衝區，用來減少記憶體碎片產生的可能，雖機率應不大。
-//    BmpBuf: TBitmap;
     Pictures: TPictureList;  // 來源影像資訊的清單
-    iPicture: Integer;       // 主影像索引
-    iPictureOld: Integer;    // 主影像索引變更前的索引
+
+    iThumbItem: TItemIndex;       // 瀏覽清單索引
+
+    iPicture: TPictureIndex;       // 主影像索引
+    iPictureOld: TPictureIndex;    // 主影像索引變更前的索引
     Limit: TSize;            // 影像在介面中可顯示全圖的最大大小
     ImageView: TImageItem;   // 目前已最佳化的影像
     DisplayMode: TDisplayMode; // 顯示影像大小的方式
@@ -200,16 +205,21 @@ type
     function ComparePictureItem(const Left, Right: TPictureItem): Integer;
     procedure OpenImagesFormFiles(const Directory: string);
     procedure OpenImagesFormZip(const Path: string);
-    function IndexOfFileName(const FileName: string): Integer;
+    function PictureIndexOfFileName(const FileName: string): Integer;
+    function GetPictureIndex(ThumbItem: TListItem): TPictureIndex; overload; inline;
+    function GetPictureIndex(ThumbItemIndex: TItemIndex): TPictureIndex; overload;
+    function GetThumbItemIndex(PictureIndex: TPictureIndex): TItemIndex;
 //    procedure OnDropFiles(Sender: TObject; WinControl: TWinControl);
     procedure DoCopyFileToClipboard(bMove: Boolean);
     procedure ShowTip(const Text: string; Seconds: Byte = 1; Color: TColor = clWindowText);
     procedure ShowLoadingInfo;
     function SaveFileToTempPath(const PictureItem: TPictureItem): string;
+    procedure LoadImage(var ImageItem: TImageItem; Stream: TStream; FrameIndex: Integer);
     function LoadOriginal(const FileItem: TPictureItem; var ImageItem: TImageItem; FrameIndex: Integer = 0; Buffer: TStream = nil): Boolean;
     function LoadPicture(Index: Integer): Boolean;
     procedure SetTimerImageWating;
-    function ShowImage(Index: Integer; Mode: TDisplayMode = _DM_Suitable): Boolean; overload;
+    function ShowImage(Index: TPictureIndex; Mode: TDisplayMode = _DM_Suitable): Boolean; overload;
+    function ShowImage(Index: TItemIndex; Mode: TDisplayMode = _DM_Suitable): Boolean; overload;
     function ShowImage(Mode: TDisplayMode): Boolean; overload; inline;
     function ShowImage: Boolean; overload; inline;
     procedure ViewOriginal(const Point: TPoint); overload;
@@ -625,6 +635,7 @@ begin
   Timer3.Enabled:= False;
   Timer2.Enabled:= False;
   Timer1.Enabled:= False;
+  CloseImages;
   Application.OnMessage := OldAppMessage;
   SaveSetting;
 end;
@@ -751,9 +762,10 @@ procedure TForm1.ListView1SelectItem(Sender: TObject; Item: TListItem; Selected:
 begin
   Include(ViewState, _VS_Selecting);
   try
-    if Selected and (Item.Index <> iPicture) and not (_VS_Turning in ViewState)then
+    if Selected and (Item.Index <> iThumbItem) and not (_VS_Turning in ViewState)then
     begin
-      iPicture := Item.Index;
+      iThumbItem := Item.Index;
+      iPicture := GetPictureIndex(Item);
       ShowImage;
     end;
   finally
@@ -878,8 +890,9 @@ begin
 
       if Pictures.Count = 0 then Exit;
 
+      iThumbItem := -1;
       iPictureOld := -1;
-      iPicture := IndexOfFileName(ExtractFileName(FilePath));
+      iPicture := PictureIndexOfFileName(ExtractFileName(FilePath));
 
       BaseThread := JvThread1.Execute(nil);
       BaseThread.Start;
@@ -1042,10 +1055,11 @@ begin
   if _VS_ImageWating in ViewState then
   begin
     Exclude(ViewState, _VS_ImageWating);
-    if IsLoading then
+    if iPicture <> iPictureOld then
       Caption := Format('Wating %s [%u/%u] ...', [Loading, iPicture + 1, Pictures.Count])
     else
       Caption := Format('Loading %s [%u/%u] ...', [iPicture + 1, Pictures.Count]);
+
     b := True;
   end;
 //  else
@@ -1062,8 +1076,16 @@ begin
 
   if b then Exit;
 
+  if ListView1.Items.Count = 0 then
+  begin
+    Exit;
+  end;
+
   TTimer(Sender).Enabled := False;
-  ShowImage;
+  if ListView1.ItemIndex < 0 then
+    ListView1.ItemIndex := 0
+  else
+    ShowImage;
 end;
 
 procedure TForm1.Timer2Timer(Sender: TObject);
@@ -1410,71 +1432,65 @@ begin
   Gif.LoadFromStream(Source);
 end;
 
+procedure TForm1.LoadImage(var ImageItem: TImageItem; Stream: TStream; FrameIndex: Integer);
+var
+  Mode: TImageType;
+  WIC: TWICImage;
+  Gif: TGIFImage;
+begin
+  Mode := ImageItem.Mode;
+  FillChar(ImageItem, SizeOf(ImageItem), 0);
+  Stream.Position := 0;
+  Gif := nil;
+  WIC := TWICImage.Create;
+  try
+    if FrameIndex > 0 then WIC.FrameIndex := FrameIndex;
+    WIC.LoadFromStream(Stream);
+    case WIC.ImageFormat of
+      wifGif:
+      begin
+        case Mode of
+          _PIT_OBJ, _PIT_GIF:
+          begin
+            Gif := TGIFImage.Create;
+            LoadGifFromStream(Stream, Gif);
+            if Gif.Images.Count > 0 then
+            begin
+              FreeAndNil(WIC);
+              ImageItem.Slot.GIF := Gif;
+              Gif := nil;
+              ImageItem.Mode := _PIT_GIF;
+              Exit;
+            end;
+          end;
+        end;
+      end;
+      wifOther:
+      begin
+        if WIC.FrameCount > 1 then
+        begin
+          FreeAndNil(WIC);
+          ImageItem.Slot.Multi := TWICImages.Create;
+          ImageItem.Slot.Multi.LoadFromStream(Stream);
+          ImageItem.Mode := _PIT_MultiWIC;
+          Exit;
+        end;
+      end;
+    end;
+    ImageItem.Slot.WIC := WIC;
+    WIC := nil;
+    ImageItem.Mode := _PIT_WIC;
+  finally
+    if Assigned(WIC) then WIC.Free;
+    if Assigned(Gif) then Gif.Free;
+  end;
+end;
+
 function TForm1.LoadOriginal(const FileItem: TPictureItem; var ImageItem: TImageItem; FrameIndex: Integer; Buffer: TStream): Boolean;
 var
   Stream: TStream;
   DataStream: TStream;
   Header: TZipHeader;
-  function LoadImage: TImageItem;
-  var
-    WIC: TWICImage;
-    Gif: TGIFImage;
-  begin
-    FillChar(Result, SizeOf(Result), 0);
-    DataStream.Position := 0;
-    Gif := nil;
-    WIC := TWICImage.Create;
-    try
-      if FrameIndex > 0 then WIC.FrameIndex := FrameIndex;
-      WIC.LoadFromStream(DataStream);
-      case WIC.ImageFormat of
-        wifGif:
-        begin
-          case ImageItem.Mode of
-            _PIT_OBJ, _PIT_GIF:
-            begin
-              Gif := TGIFImage.Create;
-              try
-                LoadGifFromStream(DataStream, Gif);
-                if Gif.Images.Count > 0 then
-                begin
-                  FreeAndNil(WIC);
-                  Result.Slot.GIF := Gif;
-                  Gif := nil;
-                  Result.Mode := _PIT_GIF;
-                  Exit;
-                end;
-              except on E: Exception do
-{$IFDEF DEBUG}
-                DbgMsg('Gif[%d] %s loading failure: ' + sLineBreak + '%s', [FileItem.ID, FileItem.Name, E.Message]);
-{$ENDIF DEBUG}
-              end;
-            end;
-          end;
-        end;
-        wifOther:
-        begin
-          if WIC.FrameCount > 1 then
-          begin
-            FreeAndNil(WIC);
-
-            Result.Slot.Multi := TWICImages.Create;
-            Result.Slot.Multi.LoadFromStream(DataStream);
-            Result.Mode := _PIT_MultiWIC;
-            Exit;
-          end;
-//          DbgMsg('File: %s, ImageFormat: wifOther, FrameCount: %d, FrameIndex: %d',
-//            [FileItem.Name, WIC.FrameCount, WIC.FrameIndex]);
-        end;
-      end;
-      Result.Slot.WIC := WIC;
-      WIC := nil;
-      Result.Mode := _PIT_WIC;
-    finally
-      if Assigned(WIC) then FreeAndNil(WIC);
-      if Assigned(Gif) then FreeAndNil(Gif);
-    end;
-  end;
 begin
   if Assigned(Buffer) then
     DataStream := Buffer
@@ -1502,8 +1518,6 @@ begin
           end
           else
             raise Exception.CreateFmt('Unknown stream class "%s".', [DataStream.ClassName]);
-          if not (DataStream is TFileStream) then
-            ImageItem := LoadImage;
         end;
         _OT_Zip:
         begin
@@ -1517,8 +1531,6 @@ begin
               // 雖不是資料本身，但仍然是 Object class 有占用記憶體空間，也是需要釋放的。
               if Assigned(Stream) then FreeAndNil(Stream);
             end;
-            if not (DataStream is TFileStream) then
-              ImageItem := LoadImage;;
           finally
             LeaveCriticalSection(ZipCS);
           end;
@@ -1528,8 +1540,10 @@ begin
           Exit(False);
         end;
       end;
+      if not (DataStream is TFileStream) then
+        LoadImage(ImageItem, DataStream, FrameIndex);
     except
-      on E: Exception do  
+      on E: Exception do
       begin
         {$IFDEF DEBUG}
         DbgMsg('Load [%d] failure: %s' + sLineBreak + '%s', [FileItem.ID, FileItem.Name, E.Message]);
@@ -1548,7 +1562,8 @@ begin
     else
       FreeAndNil(DataStream);
   end;
-  Result := (ImageItem.Mode <> _PIT_OBJ) and Assigned(ImageItem.Slot.Obj);
+  Result := True;
+//  Result := (ImageItem.Mode <> _PIT_OBJ) and Assigned(ImageItem.Slot.Obj);
 end;
 
 function TForm1.LoadPicture(Index: Integer): Boolean;
@@ -1557,19 +1572,18 @@ var
   Image: TImageItem;
   bWIC: Boolean;
   WIC: TWICImage;
-  Gif: TGIFImage;
   Thumbnail: TWICImage;
   iThumbnail: Integer;
   Item: TListItem;
   Size: TSize;
   B: Boolean;
-
   BmpBuf: TBitmap;
 begin
   FillChar(Image, SizeOf(TImageItem), 0);
 
   TThread.Synchronize(BaseThread, procedure
   begin
+    ShowLoadingInfo;
     PicItem := Pictures.Items[Index];
   end);
 
@@ -1593,7 +1607,6 @@ begin
 
   bWIC := False;
   WIC := nil;
-  Gif := nil;
 
   B := True;
   Thumbnail := nil;
@@ -1611,12 +1624,13 @@ begin
       end;
       _PIT_GIF:
       begin
-        if not Assigned(WIC) then
+        bWIC := True;
+        WIC := TWICImage.Create;
+        TThread.Synchronize(BaseThread, procedure
         begin
-          bWIC := True;
-          WIC := TWICImage.Create;
           WIC.Assign(Image.Slot.Gif);
-        end;
+        end);
+//        WIC.Assign(Image.Slot.Gif);
       end;
       _PIT_MultiWIC:
       begin
@@ -1651,30 +1665,31 @@ begin
       end;
     end;
 
+//    if Assigned(Gif) then
+//    begin
+//      if Image.Assigned then Image.Free;
+//      Image.Slot.GIF := Gif;
+//      Gif := nil;
+//      Image.Mode := _PIT_GIF;
+//    end;
+
+//    SrcRect := TRect.Create(0,  Thumbnail.Width, Thumbnail.Height);
+//    DstRect := TRect.Create(0, 0,0, ThumbSize.Width, ThumbSize.Height);
+
     TThread.Synchronize(BaseThread, procedure
     begin
+
       if Assigned(Thumbnail) then
       begin
-        BmpBuf := TBitmap.Create;
+        BmpBuf := TBitmap.Create(ThumbSize.Width, ThumbSize.Height);
         try
           BmpBuf.Canvas.Lock;
-          BmpBuf.SetSize(ThumbSize.Width, ThumbSize.Height);
           BmpBuf.Canvas.Draw((ThumbSize.Width - Thumbnail.Width) div 2, (ThumbSize.Height - Thumbnail.Height) div 2, Thumbnail);
           iThumbnail := ImageList_Add(ImageList1.Handle, BmpBuf.Handle, 0);
         finally
           BmpBuf.Canvas.Unlock;
           BmpBuf.Free;
         end;
-      end;
-
-      if Assigned(GIF) then
-      begin
-        if Image.Assigned then
-          Image.Free;
-
-        Image.Slot.GIF := Gif;
-        Gif := nil;
-        Image.Mode := _PIT_GIF;
       end;
 
       if B then
@@ -1722,7 +1737,7 @@ begin
       try
         Item := ListView1.Items.Add;
         Item.Data := Pointer(NativeInt(Index));
-        Pictures.Thumb[Index] := Item;
+        Pictures.ThumbItem[Index] := Item;
         Item.ImageIndex := iThumbnail;
         Item.Caption := IntToStr(Index + 1);
         Item.SubItems.Add(PicItem.Name);
@@ -1730,16 +1745,15 @@ begin
       finally
         ListView1.Items.EndUpdate;
       end;
-
     end);
 
     Result := True;
-  finally
+  finally            
     if Assigned(Thumbnail) then
       FreeAndNil(Thumbnail);
 
     if bWIC then
-      if Assigned(WIC) then FreeAndNil(WIC);
+      if Assigned(WIC) then WIC.Free;
 
     if Image.Assigned then Image.Free;
   end;
@@ -1751,19 +1765,18 @@ begin
   Timer1.Enabled := True;
 end;
 
-function TForm1.ShowImage(Index: Integer; Mode: TDisplayMode): Boolean;
+function TForm1.ShowImage(Index: TPictureIndex; Mode: TDisplayMode): Boolean;
 var
   Size: TSize;
   b: Boolean;
   PicItem: TPictureItem;
-  PicItemOld: TPictureItem;
+//  PicItemOld: TPictureItem;
   WIC: TWICImage;
-  Multi: TWICImages;
 begin
   Result := False;
-  if Pictures.Count = 0 then Exit;
-  if Index <> iPicture  then Exit;
-  if Closeing           then Exit;
+  if Index <> iPicture then Exit;
+  if Index < 0 then Exit;
+  if Closeing  then Exit;
 
   b := False;
   try
@@ -1775,9 +1788,9 @@ begin
 {$ENDIF DEBUG}
   end;
 
-  if PicItem.Image.Mode = _PIT_OBJ    then b := True
-  else if not PicItem.Image.Assigned  then b := True
-  else if not Assigned(PicItem.Thumb) then b := True;
+  if PicItem.Image.Mode = _PIT_OBJ        then b := True
+  else if not PicItem.Image.Assigned      then b := True
+  else if not Assigned(PicItem.ThumbItem) then b := True;
 
   if b then
   begin
@@ -1785,20 +1798,27 @@ begin
     Exit;
   end;
 
+  if ListView1.Items.Count = 0 then Exit;
+
   if iPictureOld >= 0 then
   begin
-    FillChar(PicItemOld, SizeOf(PicItemOld), 0);
-    try
-      PicItemOld := Pictures.Items[iPictureOld];
-      case PicItemOld.Image.Mode of
-        _PIT_GIF:
-        begin
-          if PicItemOld.Image.Assigned then
-            PicItemOld.Image.Slot.GIF.Animate := False;
-        end;
-      end;
-    except on E: Exception do
-    end;
+    if Image1.Picture.Graphic is TGIFImage then
+      TGIFImage(Image1.Picture.Graphic).Animate := False;
+//    FillChar(PicItemOld, SizeOf(PicItemOld), 0);
+//    try
+//      PicItemOld := Pictures.Items[iPictureOld];
+//      case PicItemOld.Image.Mode of
+//        _PIT_GIF:
+//        begin
+//          if PicItemOld.Image.Assigned then
+//          begin
+//            PicItemOld.Image.Slot.GIF.Animate := False;
+//          end;
+//        end;
+//      end;
+//    except on E: Exception do
+//    end;
+//    iPictureOld := -1;
   end;
 
   if iPictureOld <> Index then
@@ -1841,8 +1861,7 @@ begin
       _PIT_MultiWIC:
       if LoadOriginal(PicItem, ImageView, PicItem.Image.Slot.Multi.FrameIndex) then
       begin
-        Multi := ImageView.Slot.Multi;
-        WIC := Multi.Current;
+        WIC := ImageView.Slot.Multi.Current;
         Image1.Width := WIC.Width;
         Image1.Height := WIC.Height;
         Image1.Picture.WICImage := WIC;
@@ -1951,6 +1970,11 @@ begin
   Result := True;
 end;
 
+function TForm1.ShowImage(Index: TItemIndex; Mode: TDisplayMode): Boolean;
+begin
+  Result := ShowImage(GetPictureIndex(Index), Mode);
+end;
+
 function TForm1.ShowImage(Mode: TDisplayMode): Boolean;
 begin
   if Assigned(Pictures) then
@@ -2054,30 +2078,36 @@ end;
 procedure TForm1.TurnPage(Turn: TTurnPage);
 var
   ListCount: Integer;
-  I: Integer;
+  I, J: Integer;
   ThumbItem: TListItem;
   LVItem: TLVItem;
 begin
   Include(ViewState, _VS_Turning);
   try
-    I := iPicture;
     ListCount := ListView1.Items.Count;
+    I := iThumbItem;
+{$IFDEF DEBUG}
+    DbgMsg('Scroll %d/%d.', [I, ListCount]);
+{$ENDIF DEBUG}
     if ListCount < 1  then Exit;
-    if I >= ListCount then Exit;
+//    if I >= ListCount then Exit;
     case Turn of
       _TP_First: I := 0;
       _TP_Last: I := ListCount - 1;
       _TP_Prev: if I < 1 then I := ListCount - 1 else Dec(I);
       _TP_Next: if I >= (ListCount - 1) then I := 0 else Inc(I);
+      else Exit;
     end;
-    ThumbItem := Pictures.Thumb[I];
+    J := GetPictureIndex(I);
+    ThumbItem := Pictures.ThumbItem[J];
     if not Assigned(ThumbItem) then
       Exit
     else
       if ListView1.Items.IndexOf(ThumbItem) < 0 then Exit;
-    iPicture := I;
+    iThumbItem := I;
+    IPicture := J;
 {$IFDEF DEBUG}
-    DbgMsg('Scroll to %d.', [iPicture]);
+    DbgMsg('Scroll to %d.', [iThumbItem]);
 {$ENDIF DEBUG}
     CtlScrollTo(ListView1, I);
     LVItem.stateMask := LVIS_SELECTED or LVIS_FOCUSED;
@@ -2120,6 +2150,8 @@ begin
 
   if ImageView.Assigned then ImageView.Free;
 
+  if Image1.Picture.Graphic is TGIFImage then
+    TGIFImage(Image1.Picture.Graphic).Animate := False;
   Image1.Picture.Graphic := nil;
 
   Caption := 'Closed.';
@@ -2215,7 +2247,7 @@ begin
   OpenType := _OT_Zip;
 end;
 
-function TForm1.IndexOfFileName(const FileName: string): Integer;
+function TForm1.PictureIndexOfFileName(const FileName: string): Integer;
 var
   Count: Integer;
   I: Integer;
@@ -2228,6 +2260,32 @@ begin
       if CompareText(Pictures.Names[I], FileName) = 0 then
         Exit(I);
   Result := 0;
+end;
+
+function TForm1.GetPictureIndex(ThumbItem: TListItem): TPictureIndex;
+begin
+  Result := Integer(NativeInt(ThumbItem.Data));
+end;
+
+function TForm1.GetPictureIndex(ThumbItemIndex: TItemIndex): TPictureIndex;
+begin
+  if (ThumbItemIndex >= 0) and (ThumbItemIndex < ListView1.Items.Count) then
+    Result := GetPictureIndex(ListView1.Items[ThumbItemIndex])
+  else
+    Result := -1;
+end;
+
+function TForm1.GetThumbItemIndex(PictureIndex: TPictureIndex): TItemIndex;
+var
+  Item: TListItem;
+begin
+  if (PictureIndex >= 0) and (PictureIndex < Pictures.Count) then
+  begin
+    Item := Pictures.List[PictureIndex].ThumbItem;
+    if Assigned(Item) then
+      Exit(Item.Index);
+  end;
+  Result := -1;
 end;
 
 procedure TForm1.DoCopyFileToClipboard(bMove: Boolean);
@@ -2271,7 +2329,7 @@ var
     for I := iStart to iEnd do
     begin
       Loading := IntToStr((Count * 100) div Max) + '%';
-      TThread.Synchronize(BaseThread, ShowLoadingInfo);
+//      TThread.Synchronize(BaseThread, ShowLoadingInfo);
       if BaseThread.Terminated then Exit;
       LoadPicture(I);
       Inc(Count);
@@ -2304,61 +2362,6 @@ begin
   IsLoading := False;
   Loading := '';
   ShowLoadingInfo;
-end;
-
-procedure TForm1.JvThread2Execute(Sender: TObject; Params: Pointer);
-var
-  P: PGifFrameBuffer absolute Params;
-  Frame: TGIFFrame;
-  Image: TImageItem;
-  Size: TSize;
-  WIC: TWICImage;
-  GCE: TGIFGraphicControlExtension;
-begin
-  if BaseThread.Terminated then
-    Exit;
-
-  Image.Mode := _PIT_WIC;
-  Image.Slot.Obj := nil;
-  if not Assigned(P.WIC) and not LoadOriginal(P.Pic, Image, P.iFrame) then
-    raise Exception.CreateFmt('Multiple images [%d]: %s loading frame %d failed.', [P.Pic.ID, P.Pic.Name, P.iFrame]);
-
-  WIC := nil;
-  try
-    Frame := P.Frame;
-    if Assigned(P.WIC) then
-    begin
-      if GetReduceSize(P.WIC.Width, P.WIC.Height, Size) then
-      begin
-        WIC := P.WIC.CreateScaledCopy(Size.Width, Size.Height, wipmHighQualityCubic);
-        Frame.Assign(WIC); // Convert to Gif
-      end
-      else
-      begin
-        // Convert to Gif
-        Frame.Assign(P.WIC); // Convert to Gif
-      end;
-    end
-    else
-    begin
-      if GetReduceSize(Image.Slot.WIC.Width, Image.Slot.WIC.Height, Size) then
-      begin
-        WIC := Image.Slot.WIC.CreateScaledCopy(Size.Width, Size.Height, wipmHighQualityCubic);
-        FreeAndNil(Image.Slot.WIC);
-        Frame.Assign(WIC); // Convert to Gif
-      end
-      else
-      begin
-        Frame.Assign(Image.Slot.WIC); // Convert to Gif
-      end;
-    end;
-    // Setting the delay for each frame
-    GCE := TGIFGraphicControlExtension.Create(Frame);
-    GCE.Delay := 20;
-  finally
-    if Assigned(Image.Slot.WIC) then Image.Slot.WIC.Free;
-    if Assigned(WIC) then WIC.Free;
-  end;
 end;
 
 procedure TForm1.LoadSetting;
@@ -2449,7 +2452,7 @@ begin
   Image := Self;
   Self.Slot.Obj := nil;
   Self.Mode := _PIT_OBJ;
-  FreeAndNil(Image.Slot.Obj);
+  Image.Slot.Obj.Free;
 end;
 
 { TForm1.TPictureList }
@@ -2487,6 +2490,18 @@ begin
   Result := List[Index].Name;
 end;
 
+procedure TForm1.TPictureList.SetThumbIndex(Index, iThumb: Integer);
+begin
+  if (Index < 0) or (Index >= Count) then ErrorArgumentOutOfRange;
+  List[Index].iThumb := iThumb;
+end;
+
+function TForm1.TPictureList.GetThumbIndex(Index: Integer): Integer;
+begin
+  if (Index < 0) or (Index >= Count) then ErrorArgumentOutOfRange;
+  Result := List[Index].iThumb
+end;
+
 procedure TForm1.TPictureList.SetImage(Index: Integer; Mode: TImageType; Image: TObject; Thumb: TListItem);
 var
   PicItem: TPictureItem;
@@ -2494,7 +2509,7 @@ begin
   if (Index < 0) or (Index >= Count) then
     ErrorArgumentOutOfRange;
   PicItem := List[Index];
-  PicItem.Thumb := Thumb;
+  PicItem.ThumbItem := Thumb;
 
   if PicItem.Image.Assigned then
     raise Exception.Create('Image already exists.');
@@ -2535,7 +2550,7 @@ begin
   if (Index < 0) or (Index >= Count) then ErrorArgumentOutOfRange;
   PicItem := List[Index];
   Image := PicItem.Image.Slot.Obj;
-  Thumb := PicItem.Thumb;
+  Thumb := PicItem.ThumbItem;
   Result := PicItem.Image.Mode;
 end;
 
@@ -2569,16 +2584,16 @@ begin
   if GetImage(Index, TObject(Result)) <> _PIT_GIF then Result := nil;
 end;
 
-procedure TForm1.TPictureList.SetThumb(Index: Integer; Item: TListItem);
+procedure TForm1.TPictureList.SetThumbItem(Index: Integer; Item: TListItem);
 begin
   if (Index < 0) or (Index >= Count) then ErrorArgumentOutOfRange;
-  List[Index].Thumb := Item;
+  List[Index].ThumbItem := Item;
 end;
 
-function TForm1.TPictureList.GetThumb(Index: Integer): TListItem;
+function TForm1.TPictureList.GetThumbItem(Index: Integer): TListItem;
 begin
   if (Index < 0) or (Index >= Count) then ErrorArgumentOutOfRange;
-  Result := List[Index].Thumb;
+  Result := List[Index].ThumbItem;
 end;
 
 function TForm1.TPictureList.Add(ID: Integer; const Name: string): Integer;
@@ -2587,9 +2602,10 @@ var
 begin
   AItem.ID := ID;
   AItem.Name := Name;
+  AItem.iThumb := -1;
   AItem.Image.Mode := _PIT_OBJ;
   AItem.Image.Slot.Obj := nil;
-  AItem.Thumb := nil;
+  AItem.ThumbItem := nil;
   Result := inherited Add(AItem);
 end;
 

@@ -196,16 +196,7 @@ object Form1: TForm1
     BkColor = clWhite
     Height = 80
     Width = 80
-    Left = 144
-    Top = 8
-  end
-  object JvThread2: TJvThread
-    Exclusive = False
-    MaxCount = 0
-    RunOnCreate = True
-    FreeOnTerminate = True
-    OnExecute = JvThread2Execute
-    Left = 80
+    Left = 176
     Top = 8
   end
   object Timer3: TTimer
@@ -235,7 +226,7 @@ object Form1: TForm1
   end
   object JvBalloonHint1: TJvBalloonHint
     CustomAnimationTime = 0
-    Left = 224
-    Top = 112
+    Left = 96
+    Top = 8
   end
 end
