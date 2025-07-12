@@ -4,7 +4,14 @@
 說明：
 在記憶體中快速的將大型影像處理至螢幕大小，一系列的檔案會接連載入，可用於快速瀏覽多影像檔案。
 
-支援的檔案：*.bmp; *.jpg; *.jpeg; *.png; *.webp; *.tiff; *.gif, *.zip
+支援的檔案：
+*.bmp; *.jpg; *.jpeg; *.png; *.webp; *.tiff; *.gif, *.zip
+v1.4.0 加入： *.7z; *.rar; *.xz; *.gzip; *.tar; *.lzh; *.lzma; *.iso; *.udf; *.z
+v1.4.0 要支援更多壓縮格式，需要具備以下條件的其一
+1.你有安裝7Zip
+2.你有一個完整功能的7z.dll位於本程式的工作路徑下。
+3.您可以使用參數 "/7z" 指定7Zip函數庫檔名與路徑，如 ImagesPackegViewer64_v1.4.0.exe /7z C:\123\7z.dll
+
 存取的範圍：資料夾下但不包括子資料夾下的。
 使用方式：用滑鼠將檔案或者資料夾拖曳至本程式的視窗中後放開。
 
@@ -38,7 +45,15 @@ This description for version 1.3 and later.
 Description:
 Quickly process large images to screen size in memory, series of files are loading for quick browsing of multi-image files.
 
-Supported files: *.bmp; *.jpg; *.jpeg; *.png; *.webp; *.tiff; *.gif, *.zip
+Supported files: 
+*.bmp; *.jpg; *.jpeg; *.png; *.webp; *.tiff; *.gif, *.zip
+v1.4.0 add： *.7z; *.rar; *.xz; *.gzip; *.tar; *.lzh; *.lzma; *.iso; *.udf; *.z
+v1.4.0 more compressed file support need to satisfy at least one of these conditions:
+1. You have 7-Zip installed on your system.
+2. A full-featured 7z.dll is located in the program's working directory.
+3. You specify the 7-Zip library file name and path using the /7z parameter when launching the program.
+  For example: ImagesPackegViewer64_v1.4.0.exe /7z C:\123\7z.dll
+
 Scope of access: under the folder but not under the subfolder.
 How to use: Use the mouse to drag the file or folder to the window of this program and release it.
 
