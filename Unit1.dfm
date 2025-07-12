@@ -47,8 +47,6 @@ object Form1: TForm1
     TabOrder = 0
     OnDblClick = ScrollBox1DblClick
     OnResize = ScrollBox1Resize
-    ExplicitWidth = 338
-    ExplicitHeight = 479
     object Image1: TImage
       Left = 0
       Top = 0
@@ -115,8 +113,6 @@ object Form1: TForm1
     OnCompare = ListView1Compare
     OnInfoTip = ListView1InfoTip
     OnSelectItem = ListView1SelectItem
-    ExplicitLeft = 341
-    ExplicitHeight = 479
   end
   object StaticText1: TStaticText
     Left = 416
@@ -134,8 +130,6 @@ object Form1: TForm1
     ParentFont = False
     TabOrder = 1
     Visible = False
-    ExplicitLeft = 412
-    ExplicitTop = 456
   end
   object JvThread1: TJvThread
     Exclusive = True

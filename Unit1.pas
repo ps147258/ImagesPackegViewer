@@ -3,13 +3,16 @@
 interface
 
 uses
-  Winapi.Windows, Winapi.Messages, Winapi.ActiveX, Winapi.MMSystem, Winapi.CommCtrl, Winapi.ShellAPI,
+  Winapi.Windows, Winapi.Messages, Winapi.ActiveX, Winapi.MMSystem, Winapi.CommCtrl,
+  Winapi.ShellAPI,
   System.SysUtils, System.Variants, System.Classes, System.Types, System.IOUtils,
   System.Generics.Defaults, System.Generics.Collections, System.Zip, System.ImageList,
-  System.IniFiles, System.WideStrUtils,
+  System.IniFiles, System.WideStrUtils, System.Win.Registry,
   Vcl.Graphics, Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.ExtCtrls, Vcl.Clipbrd,
   Vcl.StdCtrls, Vcl.Menus, Vcl.ComCtrls, Vcl.ImgList, Vcl.Imaging.GIFImg,
   Vcl.ImageCollection,
+
+  sevenzip, JclCompression,
   JvComponentBase, JvThread, JvBalloonHint,
 
   Vcl.Graphics.MultipleWICImage,
@@ -87,7 +90,7 @@ type
   private type
     TViewState = set of (_VS_Resizing, _VS_SizeChanged, _VS_Turning, _VS_Selecting, _VS_ImageWating);
     TDisplayMode = (_DM_Suitable, _DM_Original);
-    TOpenType = (_OT_Non, _OT_Files, _OT_Zip);
+    TOpenType = (_OT_Non, _OT_Files, _OT_Compressed);
     TTurnPage = (_TP_First, _TP_Last, _TP_Prev, _TP_Next);
     TImageType = (_PIT_OBJ, _PIT_WIC, _PIT_GIF, _PIT_MultiWIC);
     TImageObj = record
@@ -161,34 +164,36 @@ type
     TItemIndex = type Integer;
     TPictureIndex = type Integer;
   private
-    Processors: DWORD;       // 處理器數量
-    SettingChanged: Boolean; // 用於表示設定是否有變動
+    Processors: DWORD;          // 處理器數量
+    SettingChanged: Boolean;    // 用於表示設定是否有變動
     SplitterMin: Integer;
     SplitterMax: Integer;
-    Closeing: Boolean;       // 程式是否處於關閉程序中
+    Closeing: Boolean;          // 程式是否處於關閉程序中
     ViewState: TViewState;
-    CursorTracking: Boolean; // 是否開始處理游標追蹤
-    IsLoading: Boolean;      // 是否正在處理清單檔案的載入
-    LastCursor: TPoint;      // 游標位置暫存
-    Loading: string;         // 同步載入處理的提示訊息
-    ThumbSize: TSize;        // 縮圖大小，在此介面建立時以 ImageList1 的圖形大小作為設定。
+    CursorTracking: Boolean;    // 是否開始處理游標追蹤
+    IsLoading: Boolean;         // 是否正在處理清單檔案的載入
+    LastCursor: TPoint;         // 游標位置暫存
+    Loading: string;            // 同步載入處理的提示訊息
+    ThumbSize: TSize;           // 縮圖大小，在此介面建立時以 ImageList1 的圖形大小作為設定。
 //    DropFiles: TDropFiles;
     DirPath: string;
     Title: string;
-    OpenType: TOpenType;     // 檔案的開啟模式
-    ZipCS: TRTLCriticalSection; // 防止 Zip 被同時存取，若 Class 沒有表明可同時多執行續，處理時都應預設為單一處理。
-    Zip: TZipFile;
-    MemBuf: TMemoryStream;   // 緩衝區，用來減少記憶體碎片產生的可能，雖機率應不大。
-    Pictures: TPictureList;  // 來源影像資訊的清單
+    OpenType: TOpenType;        // 檔案的開啟模式
+    FileStream: TFileStream;
+    Zip: TZipFile;              // Zip
+    Decompressor: TJclSevenzipDecompressArchive; // 7Zip
+    DecompressorCS: TRTLCriticalSection; // 防止被同時存取。
+    MemBuf: TMemoryStream;      // 緩衝區，用來減少記憶體碎片產生的可能，雖機率應不大。
+    Pictures: TPictureList;     // 來源影像資訊的清單
 
-    iThumbItem: TItemIndex;       // 瀏覽清單索引
+    iThumbItem: TItemIndex;     // 瀏覽清單索引
 
-    iPicture: TPictureIndex;       // 主影像索引
-    iPictureOld: TPictureIndex;    // 主影像索引變更前的索引
-    Limit: TSize;            // 影像在介面中可顯示全圖的最大大小
-    ImageView: TImageItem;   // 目前已最佳化的影像
-    DisplayMode: TDisplayMode; // 顯示影像大小的方式
-    BaseThread: TJvBaseThread; // 處理影像載入的執行續
+    iPicture: TPictureIndex;    // 主影像索引
+    iPictureOld: TPictureIndex; // 主影像索引變更前的索引
+    Limit: TSize;               // 影像在介面中可顯示全圖的最大大小
+    ImageView: TImageItem;      // 目前已最佳化的影像
+    DisplayMode: TDisplayMode;  // 顯示影像大小的方式
+    BaseThread: TJvBaseThread;  // 處理影像載入的執行續
     OldAppMessage: TMessageEvent;
     procedure OnAppMessage(var Msg: TMsg; var Handled: Boolean);
     procedure SettingChange; inline;
@@ -204,12 +209,11 @@ type
     procedure CloseImages;
     function ComparePictureItem(const Left, Right: TPictureItem): Integer;
     procedure OpenImagesFormFiles(const Directory: string);
-    procedure OpenImagesFormZip(const Path: string);
+    procedure OpenImagesFormCompressed(const Path: string);
     function PictureIndexOfFileName(const FileName: string): Integer;
     function GetPictureIndex(ThumbItem: TListItem): TPictureIndex; overload; inline;
     function GetPictureIndex(ThumbItemIndex: TItemIndex): TPictureIndex; overload;
     function GetThumbItemIndex(PictureIndex: TPictureIndex): TItemIndex;
-//    procedure OnDropFiles(Sender: TObject; WinControl: TWinControl);
     procedure DoCopyFileToClipboard(bMove: Boolean);
     procedure ShowTip(const Text: string; Seconds: Byte = 1; Color: TColor = clWindowText);
     procedure ShowLoadingInfo;
@@ -238,15 +242,45 @@ type
     procedure WndProc(var Message: TMessage); override;
   end;
 
+  TCommand = (
+    Cmd_7z // 指定 7Zip 動態函數庫的位置
+  );
+
+const
+  CommandPrefix = '/';
+  Commands: array[TCommand] of string = (
+    '7z'
+  );
+
+  // 可支援的壓縮格式副檔名，完整版的 7-Zip 動態函數庫不只這些，但我只需要常見格式就夠了
+  CompressedExtNames: array[0..10] of string = (
+    '.zip', // 此項為基本，系統支援
+    '.7z',  // 由此開始為 7-Zip 支援
+    '.rar',
+    '.xz',
+    '.gzip',
+    '.tar',
+    '.lzh',
+    '.lzma',
+    '.iso',
+    '.udf',
+    '.z'
+  );
+
+  // 支援的影像格式副檔名
+  ImageExtNames: array[0..6] of string = (
+    '.bmp',
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.webp',
+    '.tiff',
+    '.gif');
+
 var
   Form1: TForm1;
 
 implementation
-
-{$IFDEF DEBUG}
-uses
-  Debug;
-{$ENDIF DEBUG}
 
 type
   TSetting = (_AS_Layout);
@@ -300,6 +334,76 @@ begin
   gTempDir := IncludeTrailingPathDelimiter(TPath.GetTempPath) +
               ChangeFileExt(ExtractFileName(Application.ExeName), '') + PathDelim;
   Result := gTempDir
+end;
+
+function Load7ZipDll: Boolean;
+const
+  Default7zDll = '7z.dll';
+var
+  Path: string;
+  Reg: TRegistry;
+begin
+  if Is7ZipLoaded then
+    Exit(True);
+
+  //
+  // 嘗試使用參數指定的函數庫
+  //
+  if FindCmdLineSwitch(Commands[Cmd_7z], Path, True) then
+  begin
+    if FileExists(Path, False) then
+    begin
+      SevenzipLibraryName := Path;
+      Exit(Load7Zip);
+    end;
+  end;
+
+  //
+  // 嘗試使用工作路徑下的函數庫
+  //
+  Path := IncludeTrailingPathDelimiter(GetCurrentDir) + Default7zDll;
+  if FileExists(Path, False) then
+  begin
+    SevenzipLibraryName := Path;
+    Exit(Load7Zip);
+  end;
+
+  //
+  // 嘗試使用已安裝 7Zip 的函數庫
+  //
+  Reg := TRegistry.Create(KEY_QUERY_VALUE or KEY_ENUMERATE_SUB_KEYS);
+  try
+    Reg.RootKey := HKEY_LOCAL_MACHINE;
+    if Reg.OpenKeyReadOnly('SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\7-Zip') then
+    begin
+      Path := IncludeTrailingPathDelimiter(Reg.ReadString('InstallLocation')) + Default7zDll;
+      if FileExists(Path, False) then
+      begin
+        SevenzipLibraryName := Path;
+        Exit(Load7Zip);
+      end;
+    end;
+  finally
+    Reg.Free;
+  end;
+
+  Result := False;
+end;
+
+procedure Unload7ZipDll;
+begin
+  Unload7Zip;
+end;
+
+function CheckExtensionOfCompressed(const Extension: string): Boolean;
+var
+  s: string;
+begin
+  for s in CompressedExtNames do
+    if CompareText(s, Extension) = 0 then
+      Exit(True);
+
+  Result := False;
 end;
 
 function GetNearestDir(const Directory: string): string;
@@ -413,9 +517,6 @@ begin
   if DirectoryExists(Directory, False) then
   begin
     hInstApp := OpenInExplorer(Path, True);
-//    hInstApp := ShellExecute(Application.Handle, 'open', PChar(GetExplorerPath),
-//      PChar('/e,"'+Directory+'"'), nil, SW_NORMAL);
-
     if ExplorerSucceed(hInstApp) then Exit(True);
   end
   else
@@ -462,13 +563,11 @@ begin
 end;
 
 function CheckExt(const s: string): Boolean; inline;
-const
-  FileExt: array[0..6] of string = ('.bmp', '.jpg', '.jpeg', '.png', '.webp', '.tiff', '.gif');
 var
   I: Integer;
 begin
-  for I := 0 to Length(FileExt) - 1 do
-    if s.EndsWith(FileExt[I], True) then
+  for I := 0 to Length(ImageExtNames) - 1 do
+    if s.EndsWith(ImageExtNames[I], True) then
       Exit(True);
   Result := False;
 end;
@@ -574,7 +673,9 @@ begin
   Closeing := False;
   ViewState := [];
   BaseThread := nil;
+  FileStream := nil;
   Zip := nil;
+  Decompressor := nil;
   OpenType := _OT_Non;
 
   FillChar(SI, SizeOf(SI), 0);
@@ -600,25 +701,24 @@ begin
 
 //  DropFiles := TDropFiles.Create(Self, OnDropFiles);
   ViewTipAdjust;
-
   ThumbSize := TSize.Create(ImageList1.Width, ImageList1.Height);
-
+  Load7ZipDll;
 end;
 
 procedure TForm1.FormDestroy(Sender: TObject);
 begin
   JvThread1.TerminateWaitFor(False);
 
-  if Assigned(Pictures) then Pictures.Free;
-  if Assigned(MemBuf)   then MemBuf.Free;
+  if Assigned(Pictures)     then Pictures.Free;
+  if Assigned(MemBuf)       then MemBuf.Free;
+  if Assigned(Zip)          then Zip.Free;
+  if Assigned(Decompressor) then Decompressor.Free;
 
-  if Assigned(Zip) then
-  begin
-    DeleteCriticalSection(ZipCS);
-    Zip.Free;
-  end;
+  Unload7ZipDll;
+  DeleteCriticalSection(DecompressorCS);
 
-  if ImageView.Assigned then ImageView.Slot.Obj.Free;
+  if Assigned(FileStream)   then FileStream.Free;
+  if ImageView.Assigned     then ImageView.Slot.Obj.Free;
 end;
 
 procedure TForm1.FormShow(Sender: TObject);
@@ -649,25 +749,22 @@ begin
   if Assigned(OldAppMessage) then
     OldAppMessage(Msg, Handled);
 
-//  try
-    if Msg.message <> WM_MOUSEWHEEL then Exit;
-    if ListView1.MouseInClient      then Exit;
+  if Msg.message <> WM_MOUSEWHEEL then Exit;
+  if ListView1.MouseInClient      then Exit;
 
-    WheelDelta := PCMMouseWheel(@Msg.message).WheelDelta;
+  WheelDelta := PCMMouseWheel(@Msg.message).WheelDelta;
 
-    if WheelDelta > 0 then
-    begin
-      TurnPage(_TP_Prev);
-      Handled := True;
-    end
-    else
-    if WheelDelta < 0 then
-    begin
-      TurnPage(_TP_Next);
-      Handled := True;
-    end;
-//  finally
-//  end;
+  if WheelDelta > 0 then
+  begin
+    TurnPage(_TP_Prev);
+    Handled := True;
+  end
+  else
+  if WheelDelta < 0 then
+  begin
+    TurnPage(_TP_Next);
+    Handled := True;
+  end;
 end;
 
 procedure TForm1.FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
@@ -781,7 +878,7 @@ var
 begin
   if not ((ssShift in Shift) xor (ssCtrl in Shift)) then
     goto NoDrag;
-//
+
 //  // Check mouse button, if mouse left button only.
 //  if not (ssLeft in Shift) or (ssRight in Shift) or (ssMiddle in Shift) then
 //    goto NoDrag;
@@ -800,7 +897,7 @@ begin
       s := DirPath + Pictures.Items[iPicture].Name;
       DropFileSource1.DragTypes := [dtCopy, dtMove];
     end;
-    _OT_Zip:
+    _OT_Compressed:
     begin
       s := SaveFileToTempPath(Pictures.Items[iPicture]);
       DropFileSource1.DragTypes := [dtCopy];
@@ -858,7 +955,7 @@ begin
   try
     TThread.Synchronize(nil, procedure
     var
-      FilePath: string;
+      FilePath, Ext: string;
     begin
       if DropFileSource1.DragInProgress   then Exit;
       if DropFileSource1.Files.Count  > 0 then Exit;
@@ -868,10 +965,12 @@ begin
       FilePath := DropFileTarget1.Files[0];
       if FileExists(FilePath, False) then
       begin
-        if ExtractFileExt(FilePath) = '.zip' then
+        Ext := ExtractFileExt(FilePath);
+        if CheckExtensionOfCompressed(Ext) then
         begin
           DirPath := FilePath;
-          OpenImagesFormZip(FilePath);
+          if Is7ZipLoaded or (CompareText(Ext, CompressedExtNames[0]) = 0) then
+            OpenImagesFormCompressed(FilePath);
         end
         else
         begin
@@ -942,7 +1041,7 @@ begin
     Filename := DropFileSource1.Files[0];
 
     case OpenType of
-      _OT_Zip:
+      _OT_Compressed:
         if string.StartsText(GetAppTempDir, Filename) then
           if FileExists(Filename, False) then
             DeleteFile(Filename);
@@ -956,18 +1055,18 @@ begin
     case OpenType of
       _OT_Files:
       case DragResult of
-        drDropCopy: HintTitle := '複製檔案';
-        drDropMove: HintTitle := '移動檔案';
+        drDropCopy:   HintTitle := '複製檔案';
+        drDropMove:   HintTitle := '移動檔案';
       end;
-      _OT_Zip:      HintTitle := '提取檔案';
+      _OT_Compressed: HintTitle := '提取檔案';
       else Exit;
     end;
     JvBalloonHint1.UseBalloonAsApplicationHint := True;
     try
       case OpenType of
-      _OT_Files: HintMsg := '來源：' + sLineBreak + IncludeTrailingPathDelimiter(DirPath) + Filename;
-      _OT_Zip: HintMsg := '來源：' + DirPath + sLineBreak +
-                         '提取：' + ExtractFileName(Filename);
+      _OT_Files:      HintMsg := '來源：' + sLineBreak + IncludeTrailingPathDelimiter(DirPath) + Filename;
+      _OT_Compressed: HintMsg := '來源：' + DirPath + sLineBreak +
+                                 '提取：' + ExtractFileName(Filename);
       end;
       JvBalloonHint1.ActivateHintPos(nil, LastCursor, HintTitle, HintMsg, 2000);
     finally
@@ -1181,7 +1280,7 @@ begin
       if (iPicture >= 0) and (iPicture < Pictures.Count) then
         BrowseByExplorer(DirPath, Pictures.Items[iPicture].Name, _FEO_All);
     end;
-    _OT_Zip:
+    _OT_Compressed:
       BrowseByExplorer(ExtractFileDir(DirPath), ExtractFileName(DirPath), _FEO_All);
   end;
 end;
@@ -1189,7 +1288,7 @@ end;
 procedure TForm1.N6Click(Sender: TObject);
 begin
   case OpenType of
-    _OT_Files, _OT_Zip: DoCopyFileToClipboard(False);
+    _OT_Files, _OT_Compressed: DoCopyFileToClipboard(False);
   end;
 end;
 
@@ -1491,6 +1590,7 @@ var
   Stream: TStream;
   DataStream: TStream;
   Header: TZipHeader;
+  CompressionItem: TJclCompressionItem;
 begin
   if Assigned(Buffer) then
     DataStream := Buffer
@@ -1519,20 +1619,39 @@ begin
           else
             raise Exception.CreateFmt('Unknown stream class "%s".', [DataStream.ClassName]);
         end;
-        _OT_Zip:
+        _OT_Compressed:
         begin
-          EnterCriticalSection(ZipCS);
+          EnterCriticalSection(DecompressorCS);
           try
-            try
-              Zip.Read(FileItem.ID, Stream, Header); // 取得壓縮檔中目標資料串流
-              CopyStream(Stream, DataStream, Header.UncompressedSize); // 解碼(解壓縮)資料
-            finally
-              // 由 Zip.Read 中建立傳出的 Stream 是一個包裝著解碼函數的 Object class，
-              // 雖不是資料本身，但仍然是 Object class 有占用記憶體空間，也是需要釋放的。
-              if Assigned(Stream) then FreeAndNil(Stream);
+            if Is7ZipLoaded then
+            begin // 當 7Zip 函數庫已載入，使用 7Zip 解壓縮介面
+              DataStream.Size := 0;
+              DataStream.Position := 0;
+
+              CompressionItem := Decompressor.Items[FileItem.ID];
+              try
+                CompressionItem.Stream := DataStream;
+                CompressionItem.Selected := True;
+
+                Decompressor.ExtractSelected();
+              finally
+                CompressionItem.Stream := nil;
+                CompressionItem.Selected := False;
+              end;
+            end
+            else
+            begin // 當沒有 7Zip 函數庫時，使用系統 Zip 解壓縮介面
+              try
+                Zip.Read(FileItem.ID, Stream, Header); // 取得壓縮檔中目標資料串流
+                CopyStream(Stream, DataStream, Header.UncompressedSize); // 解碼(解壓縮)資料
+              finally
+                // 由 Zip.Read 中建立傳出的 Stream 是一個包裝著解碼介面的 Object class，
+                // 雖不是資料本身，但仍然是 Object class 有占用記憶體空間，也是需要釋放的。
+                if Assigned(Stream) then FreeAndNil(Stream);
+              end;
             end;
           finally
-            LeaveCriticalSection(ZipCS);
+            LeaveCriticalSection(DecompressorCS);
           end;
         end;
         else
@@ -1630,7 +1749,6 @@ begin
         begin
           WIC.Assign(Image.Slot.Gif);
         end);
-//        WIC.Assign(Image.Slot.Gif);
       end;
       _PIT_MultiWIC:
       begin
@@ -1748,7 +1866,7 @@ begin
     end);
 
     Result := True;
-  finally            
+  finally
     if Assigned(Thumbnail) then
       FreeAndNil(Thumbnail);
 
@@ -1880,7 +1998,7 @@ begin
     else
     begin
       case OpenType of
-        _OT_Files, _OT_Zip:
+        _OT_Files, _OT_Compressed:
         begin
           ShowMessageFmt('無法載入影像：'+sLineBreak+'%s', [IncludeTrailingPathDelimiter(DirPath) + PicItem.Name]);
         end;
@@ -2141,12 +2259,17 @@ begin
 
   ListView1.Clear;
   ImageList1.Clear;
-  
+
+  DeleteCriticalSection(DecompressorCS);
+
   if Assigned(Zip) then
-  begin
-    DeleteCriticalSection(ZipCS);
     FreeAndNil(Zip);
-  end;
+
+  if Assigned(Decompressor) then
+    FreeAndNil(Decompressor);
+
+  if Assigned(FileStream) then
+    FreeAndNil(FileStream);
 
   if ImageView.Assigned then ImageView.Free;
 
@@ -2195,8 +2318,17 @@ begin
   OpenType := _OT_Files;
 end;
 
-procedure TForm1.OpenImagesFormZip(const Path: string);
+procedure TForm1.OpenImagesFormCompressed(const Path: string);
 var
+  b: Boolean;
+  ExtFormats: Integer;
+
+  CompressionFormats: TJclCompressionArchiveFormats;
+  DecompressList: TJclDecompressArchiveClassArray;
+  Decompress: TJclDecompressArchiveClass;
+  CompressionItem: TJclCompressionItem;
+  LastError: string;
+
   Infos: TArray<TZipHeader>;
   Count: Integer;
   I, J: Integer;
@@ -2204,47 +2336,140 @@ var
   FileName: string;
 begin
   if Assigned(Zip) then
-  begin
-  //raise Exception.Create('Zip is not nil, it seems that the previous has not been released, this shouldn''t happen.');
     FreeAndNil(Zip);
-  end;
+
+  if Assigned(Decompressor) then
+    FreeAndNil(Decompressor);
+
+  if Assigned(FileStream) then
+    FreeAndNil(FileStream);
 
   Title := ChangeFileExt(ExtractFileName(Path), '');
 
-  InitializeCriticalSection(ZipCS);
-  Zip := TZipFile.Create;
-  Zip.Open(Path, zmRead);
-  Infos := Zip.FileInfos;
-  Count := Length(Infos);
-  Pictures.Count := Count;
-  Item.Image.Mode := _PIT_OBJ;
-  Item.Image.Slot.Obj := nil;
+  InitializeCriticalSection(DecompressorCS);
+
   J := 0;
-  for I := 0 to Count - 1 do
+  if Is7ZipLoaded then
   begin
-    if Infos[I].ExternalAttributes and FILE_ATTRIBUTE_DIRECTORY = 0 then
-    begin
-      if Infos[I].UTF8Support then
-        FileName := TEncoding.UTF8.GetString(Infos[I].FileName)
-      else if Zip.Encoding.CodePage = 437 then
-        FileName := UTF8ArrayToString(Infos[I].FileName)
-      else
-        FileName := Zip.Encoding.GetString(Infos[I].FileName);
+    try
+      CompressionFormats := GetArchiveFormats;
+      FileStream := TFileStream.Create(Path, fmOpenRead, fmShareDenyWrite);
+      DecompressList := CompressionFormats.FindDecompressFormats(Path);
+      ExtFormats := Length(DecompressList);
+      SetLength(DecompressList, CompressionFormats.DecompressFormatCount);
 
-      FileName := FileName.Replace('/', PathDelim);
-
-      if CheckExt(FileName) then
+      Count := ExtFormats;
+      for I := 0 to CompressionFormats.DecompressFormatCount - 1 do
       begin
-        Item.ID := I;
-        Item.Name := FileName;
-        Pictures.Items[J] := Item;
-        Inc(J);
+        Decompress := CompressionFormats.DecompressFormats[I];
+
+        b := True;
+        for J := 0 to ExtFormats - 1 do
+        begin
+          if DecompressList[J] = Decompress then
+          begin
+            b := False;
+            Break;
+          end;
+        end;
+
+        if b then
+        begin
+          DecompressList[Count] := Decompress;
+          Inc(Count);
+        end;
+      end;
+
+      for I := 0 to Length(DecompressList) - 1 do
+      begin
+        Decompress := DecompressList[I];
+        try
+          Decompressor := TJclSevenzipDecompressArchive(Decompress.NewInstance).Create(FileStream, 0, False);
+          Decompressor.ListFiles;
+          LastError := '';
+          Break;
+        except on E: Exception do
+          begin
+            LastError := E.Message;
+            if Assigned(Decompressor) then
+              FreeAndNil(Decompressor);
+          end;
+        end;
+      end;
+
+      if not LastError.IsEmpty then
+        raise Exception.Create(LastError);
+
+      Count := Decompressor.ItemCount;
+      Pictures.Count := Count;
+      Item.Image.Mode := _PIT_OBJ;
+      Item.Image.Slot.Obj := nil;
+
+      J := 0;
+      for I := 0 to Count - 1 do
+      begin
+        CompressionItem := Decompressor.Items[I];
+
+        if CompressionItem.Directory then
+          Continue;
+
+        FileName := CompressionItem.PackedName;
+        FileName := FileName.Replace('/', PathDelim);
+
+        if CheckExt(FileName) then
+        begin
+          Item.ID := I;
+          Item.Name := FileName;
+          Pictures.Items[J] := Item;
+          Inc(J);
+        end;
+      end;
+    except
+      on E: Exception do
+      begin
+        if Assigned(Decompressor) then
+          FreeAndNil(Decompressor);
+        ShowMessage(E.Message);
+      end;
+    end;
+  end
+  else
+  begin
+    Zip := TZipFile.Create;
+    Zip.Open(Path, zmRead);
+    Infos := Zip.FileInfos;
+    Count := Length(Infos);
+    Pictures.Count := Count;
+    Item.Image.Mode := _PIT_OBJ;
+    Item.Image.Slot.Obj := nil;
+
+    for I := 0 to Count - 1 do
+    begin
+      if Infos[I].ExternalAttributes and FILE_ATTRIBUTE_DIRECTORY = 0 then
+      begin
+        if Infos[I].UTF8Support then
+          FileName := TEncoding.UTF8.GetString(Infos[I].FileName)
+        else if Zip.Encoding.CodePage = 437 then
+          FileName := UTF8ArrayToString(Infos[I].FileName)
+        else
+          FileName := Zip.Encoding.GetString(Infos[I].FileName);
+
+        FileName := FileName.Replace('/', PathDelim);
+
+        if CheckExt(FileName) then
+        begin
+          Item.ID := I;
+          Item.Name := FileName;
+          Pictures.Items[J] := Item;
+          Inc(J);
+        end;
       end;
     end;
   end;
+
   Pictures.Count := J;
   Pictures.Sort;
-  OpenType := _OT_Zip;
+  OpenType := _OT_Compressed;
 end;
 
 function TForm1.PictureIndexOfFileName(const FileName: string): Integer;
@@ -2303,7 +2528,7 @@ begin
       CopyFileToClipboard(s, bMove);
       if bMove then ShowTip('已移動檔案') else ShowTip('已複製檔案');
     end;
-    _OT_Zip:
+    _OT_Compressed:
     begin
       s := SaveFileToTempPath(Pictures.Items[iPicture]);
       CopyFileToClipboard(s, True);
@@ -2329,8 +2554,8 @@ var
     for I := iStart to iEnd do
     begin
       Loading := IntToStr((Count * 100) div Max) + '%';
-//      TThread.Synchronize(BaseThread, ShowLoadingInfo);
-      if BaseThread.Terminated then Exit;
+      if BaseThread.Terminated then
+        Exit;
       LoadPicture(I);
       Inc(Count);
     end;
